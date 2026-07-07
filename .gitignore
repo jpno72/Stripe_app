@@ -2,4 +2,6 @@ node_modules/
 .env
 *.log
 npm-debug.log*
-
+android/.gradle/
+android/**/build/
+android/local.properties
