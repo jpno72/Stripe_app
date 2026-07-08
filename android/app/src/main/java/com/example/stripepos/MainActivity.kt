@@ -18,6 +18,7 @@ import androidx.core.content.ContextCompat
 import com.example.stripepos.config.AppConfig
 import com.example.stripepos.data.ApiClient
 import com.example.stripepos.data.CustomerSummary
+import com.example.stripepos.data.MembershipPlan
 import com.example.stripepos.terminal.TerminalManager
 import com.google.android.material.textfield.TextInputEditText
 import com.stripe.stripeterminal.external.models.Reader
@@ -31,10 +32,13 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
     private lateinit var selectedCustomerText: TextView
     private lateinit var readersAdapter: ArrayAdapter<String>
     private lateinit var customersAdapter: ArrayAdapter<String>
+    private lateinit var plansAdapter: ArrayAdapter<String>
 
     private var discoveredReaders: List<Reader> = emptyList()
     private var foundCustomers: List<CustomerSummary> = emptyList()
+    private var membershipPlans: List<MembershipPlan> = emptyList()
     private var selectedCustomerId: Long? = null
+    private var selectedPlan: MembershipPlan? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,6 +60,36 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
 
         root.addView(TextView(this).withText("Backend: ${AppConfig.backendBaseUrl}"))
         root.addView(statusText)
+        root.addView(sectionTitle("Backend Smoke Tests"))
+        root.addView(TextView(this).withText("Simulated reader mode: ${AppConfig.useSimulatedReader}"))
+        root.addView(Button(this).withText("Check /health").withClick {
+            runNetworkAction("Checking backend health...") {
+                val ok = apiClient.checkHealth()
+                runOnUiThread {
+                    onStatus(if (ok) "Backend /health OK" else "Backend /health returned not OK")
+                }
+            }
+        })
+        root.addView(Button(this).withText("Test Connection Token Endpoint").withClick {
+            runNetworkAction("Testing connection-token endpoint...") {
+                apiClient.fetchConnectionToken()
+                runOnUiThread {
+                    onStatus("Connection-token endpoint OK")
+                }
+            }
+        })
+        root.addView(Button(this).withText("Test Card-Present Intent Endpoint").withClick {
+            runNetworkAction("Testing card-present PaymentIntent endpoint...") {
+                val intent = apiClient.createCardPresentPaymentIntent(
+                    amount = 100,
+                    currency = "usd",
+                    customerId = null
+                )
+                runOnUiThread {
+                    onStatus("PaymentIntent endpoint OK: ${intent.id}")
+                }
+            }
+        })
         root.addView(sectionTitle("Reader"))
 
         selectedReaderText = TextView(this).withText("No reader connected")
@@ -131,6 +165,54 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
                     selectedCustomerId = customer.id
                     selectedCustomerText.text = "Selected: $customer"
                     onStatus("Customer created")
+                }
+            }
+        })
+
+        root.addView(sectionTitle("Membership Subscription"))
+        root.addView(TextView(this).withText("Recurring billing requires a reusable Stripe payment method on the customer. Terminal card-present payments do not automatically save one for future membership billing."))
+        root.addView(Button(this).withText("Load Membership Plans").withClick {
+            runNetworkAction("Loading membership plans...") {
+                membershipPlans = apiClient.fetchMembershipPlans()
+                runOnUiThread {
+                    plansAdapter.clear()
+                    plansAdapter.addAll(membershipPlans.map(MembershipPlan::toString))
+                    plansAdapter.notifyDataSetChanged()
+                    onStatus("Loaded ${membershipPlans.size} membership plan(s)")
+                }
+            }
+        })
+
+        plansAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, mutableListOf())
+        val plansList = ListView(this).apply {
+            adapter = plansAdapter
+            setOnItemClickListener { _, _, position, _ ->
+                membershipPlans.getOrNull(position)?.let { plan ->
+                    selectedPlan = plan
+                    onStatus("Selected membership plan: ${plan.name}")
+                }
+            }
+        }
+        root.addView(plansList, LinearLayout.LayoutParams.MATCH_PARENT, 200)
+
+        root.addView(Button(this).withText("Create Membership Subscription").withClick {
+            val customerId = selectedCustomerId
+            val plan = selectedPlan
+
+            if (customerId == null) {
+                Toast.makeText(this, "Select or create a customer first", Toast.LENGTH_SHORT).show()
+                return@withClick
+            }
+
+            if (plan == null) {
+                Toast.makeText(this, "Select a membership plan first", Toast.LENGTH_SHORT).show()
+                return@withClick
+            }
+
+            runNetworkAction("Creating subscription...") {
+                val subscription = apiClient.createSubscription(customerId, plan.id)
+                runOnUiThread {
+                    onStatus("Subscription ${subscription.stripeSubscriptionId}: ${subscription.status}")
                 }
             }
         })

@@ -1,5 +1,7 @@
 const { stripe } = require("../config/stripe");
+const { env } = require("../config/env");
 const { getCustomerById } = require("../repositories/customerRepository");
+const { createCustomer } = require("./customerService");
 const {
   upsertSubscriptionRecord,
   getSubscriptionById,
@@ -8,16 +10,25 @@ const {
 const { HttpError } = require("../errors/httpError");
 
 async function createSubscription(input) {
-  const customer = await getCustomerById(input.customerId);
+  const plan = getMembershipPlan(input.planId, input.priceId);
+  const customer = await resolveCustomer(input);
   if (!customer) {
     throw new HttpError(404, "Customer not found");
   }
 
+  if (env.localStripeMockMode) {
+    const mockSubscription = createMockSubscription(customer, plan, input.metadata || {});
+    const record = await saveStripeSubscription(mockSubscription, customer.id);
+    return { subscription: record, stripeSubscription: mockSubscription, plan };
+  }
+
+  // Recurring subscriptions require a reusable customer payment method.
+  // A card-present Terminal payment does not automatically create one for future off-session billing.
   const subscription = await stripe.subscriptions.create({
     customer: customer.stripe_customer_id,
     items: [
       {
-        price: input.priceId,
+        price: plan.stripePriceId,
         quantity: input.quantity || 1
       }
     ],
@@ -28,7 +39,11 @@ async function createSubscription(input) {
   });
 
   const record = await saveStripeSubscription(subscription, customer.id);
-  return { subscription: record, stripeSubscription: subscription };
+  return { subscription: record, stripeSubscription: subscription, plan };
+}
+
+function listMembershipPlans() {
+  return env.membershipPlans;
 }
 
 async function readSubscription(id) {
@@ -75,11 +90,69 @@ async function saveStripeSubscription(stripeSubscription, localCustomerId) {
   });
 }
 
+async function resolveCustomer(input) {
+  if (input.customerId) {
+    return getCustomerById(input.customerId);
+  }
+
+  if (input.customer) {
+    return createCustomer({
+      name: input.customer.name,
+      email: input.customer.email,
+      phone: input.customer.phone,
+      metadata: input.customer.metadata || {}
+    });
+  }
+
+  throw new HttpError(400, "customerId or customer is required");
+}
+
+function getMembershipPlan(planId, priceId) {
+  if (env.membershipPlans.length === 0) {
+    throw new HttpError(500, "No membership plans are configured");
+  }
+
+  const plan = env.membershipPlans.find((candidate) => {
+    return (planId && candidate.id === planId) || (priceId && candidate.stripePriceId === priceId);
+  });
+
+  if (!plan) {
+    throw new HttpError(400, "Membership plan is not configured");
+  }
+
+  return plan;
+}
+
+function createMockSubscription(customer, plan, metadata) {
+  const now = Math.floor(Date.now() / 1000);
+  const id = `sub_mock_phase3_${Date.now()}`;
+
+  return {
+    id,
+    customer: customer.stripe_customer_id,
+    status: "incomplete",
+    current_period_start: now,
+    current_period_end: now + 30 * 24 * 60 * 60,
+    cancel_at_period_end: false,
+    canceled_at: null,
+    metadata,
+    items: {
+      data: [
+        {
+          price: {
+            id: plan.stripePriceId
+          }
+        }
+      ]
+    }
+  };
+}
+
 module.exports = {
+  listMembershipPlans,
   createSubscription,
   readSubscription,
   findSubscriptions,
   cancelSubscription,
   saveStripeSubscription
 };
-

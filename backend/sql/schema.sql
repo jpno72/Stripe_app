@@ -71,6 +71,26 @@ CREATE TABLE IF NOT EXISTS webhook_events (
   KEY idx_webhook_events_type (type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS invoices (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  stripe_invoice_id VARCHAR(255) NOT NULL,
+  stripe_subscription_id VARCHAR(255) NULL,
+  stripe_customer_id VARCHAR(255) NULL,
+  status VARCHAR(50) NULL,
+  amount_due INT UNSIGNED NOT NULL DEFAULT 0,
+  amount_paid INT UNSIGNED NOT NULL DEFAULT 0,
+  currency VARCHAR(10) NULL,
+  hosted_invoice_url VARCHAR(1000) NULL,
+  invoice_pdf VARCHAR(1000) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_invoices_stripe_invoice_id (stripe_invoice_id),
+  KEY idx_invoices_subscription_id (stripe_subscription_id),
+  KEY idx_invoices_customer_id (stripe_customer_id),
+  KEY idx_invoices_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS audit_logs (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   actor_type VARCHAR(50) NOT NULL,

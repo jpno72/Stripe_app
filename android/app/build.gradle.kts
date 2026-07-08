@@ -32,6 +32,7 @@ android {
         buildConfigField("String", "BACKEND_BASE_URL", "\"${configValue("backendBaseUrl", "http://10.0.2.2:3000")}\"")
         buildConfigField("String", "BACKEND_API_TOKEN", "\"${configValue("backendApiToken", "replace_with_phase_1_API_TOKEN")}\"")
         buildConfigField("String", "STRIPE_LOCATION_ID", "\"${configValue("stripeLocationId", "tml_replace_with_test_location_id")}\"")
+        buildConfigField("Boolean", "USE_SIMULATED_READER", configValue("useSimulatedReader", "true"))
     }
 
     compileOptions {

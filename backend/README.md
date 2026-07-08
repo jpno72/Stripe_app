@@ -71,11 +71,36 @@ Edit `.env` and set:
 - `STRIPE_WEBHOOK_SECRET`
 - `APP_NAME`
 - `DEFAULT_CURRENCY`
+- `LOCAL_STRIPE_MOCK_MODE`
+- `MEMBERSHIP_PLANS_JSON`
 - `DB_HOST`
 - `DB_PORT`
 - `DB_USER`
 - `DB_PASSWORD`
 - `DB_NAME`
+
+For Phase 2 local smoke testing, `LOCAL_STRIPE_MOCK_MODE=true` lets the connection-token and card-present PaymentIntent endpoints return mock responses without calling Stripe or writing payment rows to MySQL. Use `LOCAL_STRIPE_MOCK_MODE=false` only when you have real Stripe test keys, a database, and are ready for Stripe SDK testing.
+
+Windows PowerShell setup from the repository root:
+
+```powershell
+Set-Location ".\backend"
+Copy-Item ".\.env.example" ".\.env"
+notepad ".\.env"
+```
+
+For quick Phase 2 local testing, keep these values aligned between backend `.env` and Android `local.properties`:
+
+```text
+API_TOKEN=replace_with_a_long_random_internal_token
+LOCAL_STRIPE_MOCK_MODE=true
+```
+
+For Phase 3 subscription setup, configure membership plans with Stripe recurring Price IDs:
+
+```text
+MEMBERSHIP_PLANS_JSON=[{"id":"basic","name":"Basic Membership","stripePriceId":"price_123","description":"Basic monthly membership"}]
+```
 
 1. Start the API:
 
@@ -166,16 +191,27 @@ GET /api/v1/customers?q=Jane
 GET /api/v1/customers/:id
 ```
 
-### Subscriptions
+### Phase 3 Subscriptions
+
+Subscription management starts in Phase 3. Keep it simple: select a configured membership plan, select or create a customer, and create one Stripe subscription.
+
+Before testing subscriptions in real Stripe mode:
+
+- Create membership Products in Stripe Dashboard.
+- Add recurring Prices for those Products.
+- Copy the recurring `price_...` IDs into `MEMBERSHIP_PLANS_JSON`.
+- Make sure the Stripe Customer has a reusable payment method for recurring billing.
+- Do not assume a card-present Stripe Terminal payment saved a recurring payment method. Saving a reusable payment method is a separate setup flow and is manual-test/device-dependent for future work.
 
 ```http
+GET /api/v1/subscriptions/plans
 POST /api/v1/subscriptions
 GET /api/v1/subscriptions
 GET /api/v1/subscriptions/:id
 POST /api/v1/subscriptions/:id/cancel
 ```
 
-Subscription creation requires a Stripe Price ID.
+Subscription creation requires a configured membership `planId`. Each configured plan maps to a Stripe recurring Price ID on the backend.
 
 Note: Stripe Terminal card-present payments do not automatically create a reusable online payment method for recurring subscriptions. This endpoint assumes the Stripe Customer already has a suitable default payment method, uses a trial/incomplete flow, or will be completed by a future billing setup flow.
 
@@ -198,6 +234,13 @@ Handled event families:
 - `customer.subscription.created`
 - `customer.subscription.updated`
 - `customer.subscription.deleted`
+- `invoice.created`
+- `invoice.finalized`
+- `invoice.paid`
+- `invoice.payment_succeeded`
+- `invoice.payment_failed`
+- `invoice.voided`
+- `invoice.marked_uncollectible`
 
 All webhook payloads are stored in `webhook_events`.
 
@@ -270,7 +313,7 @@ curl -X POST "$API_BASE/api/v1/payment-intents/card-present" \
   }'
 ```
 
-Create subscription:
+Phase 3 subscription example, not part of current Phase 2 testing:
 
 ```bash
 curl -X POST "$API_BASE/api/v1/subscriptions" \
@@ -278,7 +321,7 @@ curl -X POST "$API_BASE/api/v1/subscriptions" \
   -H "Content-Type: application/json" \
   -d '{
     "customerId": 1,
-    "priceId": "price_replace_me",
+    "planId": "basic",
     "quantity": 1,
     "metadata": {
       "membership": "monthly_membership"
@@ -286,14 +329,14 @@ curl -X POST "$API_BASE/api/v1/subscriptions" \
   }'
 ```
 
-List subscriptions:
+Phase 3 list subscriptions example:
 
 ```bash
 curl "$API_BASE/api/v1/subscriptions?customerId=1" \
   -H "Authorization: Bearer $API_TOKEN"
 ```
 
-Cancel subscription at period end:
+Phase 3 cancel subscription at period end example:
 
 ```bash
 curl -X POST "$API_BASE/api/v1/subscriptions/1/cancel" \
@@ -304,7 +347,7 @@ curl -X POST "$API_BASE/api/v1/subscriptions/1/cancel" \
   }'
 ```
 
-Cancel subscription immediately:
+Phase 3 cancel subscription immediately example:
 
 ```bash
 curl -X POST "$API_BASE/api/v1/subscriptions/1/cancel" \
@@ -334,6 +377,7 @@ stripe trigger customer.subscription.created
 - `customers`
 - `payments`
 - `subscriptions`
+- `invoices`
 - `webhook_events`
 - `audit_logs`
 
@@ -357,18 +401,50 @@ These notes are practical starting points because cPanel setups vary by host.
 
 - Start the server with valid `.env` values.
 - Confirm `GET /health` returns `{ "ok": true }`.
+- For Phase 2 smoke testing, confirm `LOCAL_STRIPE_MOCK_MODE=true` is set.
 - Confirm `/api/v1/*` requests without `Authorization` return `401`.
 - Create a customer and confirm a row exists in `customers`.
 - Search and read that customer.
 - Create a Terminal connection token with a Stripe test secret key.
 - Create a card-present PaymentIntent and confirm `payment_method_types` is `["card_present"]` in Stripe Dashboard.
 - Confirm a row exists in `payments`.
-- Create a test subscription using a valid Stripe test Price ID and confirm a row exists in `subscriptions`.
-- Cancel the subscription at period end and confirm local status fields update.
+- Leave subscription create/read/cancel testing for Phase 3.
 - Use Stripe CLI to forward webhooks and confirm verified events are stored in `webhook_events`.
 - Confirm webhook calls with an invalid signature are rejected.
 - Confirm API calls create rows in `audit_logs`.
 - Before live use, test with the real Android app, Stripe Terminal SDK, and Reader M2 in Stripe test mode.
+
+## Phase 2 Local Smoke Test Commands
+
+From PowerShell in the repository root:
+
+```powershell
+Set-Location ".\backend"
+Copy-Item ".\.env.example" ".\.env" -Force
+$env:PORT = "3000"
+npm start
+```
+
+In another PowerShell window:
+
+```powershell
+$base = "http://localhost:3000"
+$token = "replace_with_a_long_random_internal_token"
+
+Invoke-RestMethod "$base/health"
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "$base/api/v1/terminal/connection-token" `
+  -Headers @{ Authorization = "Bearer $token" }
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "$base/api/v1/payment-intents/card-present" `
+  -Headers @{ Authorization = "Bearer $token" } `
+  -ContentType "application/json" `
+  -Body '{"amount":100,"currency":"usd","description":"Phase 2 smoke test"}'
+```
 
 ## Production Notes
 

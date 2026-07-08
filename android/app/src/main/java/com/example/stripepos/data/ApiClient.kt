@@ -26,7 +26,30 @@ data class CustomerSummary(
     }
 }
 
+data class MembershipPlan(
+    val id: String,
+    val name: String,
+    val stripePriceId: String,
+    val description: String?
+) {
+    override fun toString(): String {
+        return if (description.isNullOrBlank()) name else "$name | $description"
+    }
+}
+
+data class SubscriptionSummary(
+    val id: Long,
+    val stripeSubscriptionId: String,
+    val status: String,
+    val stripePriceId: String?
+)
+
 class ApiClient {
+    fun checkHealth(): Boolean {
+        val json = request("GET", "/health", authenticated = false)
+        return json.optBoolean("ok", false)
+    }
+
     fun fetchConnectionToken(): String {
         val json = request("POST", "/api/v1/terminal/connection-token")
         return json.getString("secret")
@@ -73,13 +96,37 @@ class ApiClient {
         return json.getJSONObject("customer").toCustomerSummary()
     }
 
-    private fun request(method: String, path: String, body: JSONObject? = null): JSONObject {
+    fun fetchMembershipPlans(): List<MembershipPlan> {
+        val json = request("GET", "/api/v1/subscriptions/plans")
+        return json.getJSONArray("plans").toMembershipPlans()
+    }
+
+    fun createSubscription(customerId: Long, planId: String): SubscriptionSummary {
+        // Recurring billing requires the Stripe Customer to have a reusable payment method.
+        // A Terminal card-present payment does not by itself save a reusable subscription payment method.
+        val body = JSONObject()
+            .put("customerId", customerId)
+            .put("planId", planId)
+            .put("metadata", JSONObject().put("source", "android_membership_setup"))
+
+        val json = request("POST", "/api/v1/subscriptions", body)
+        return json.getJSONObject("subscription").toSubscriptionSummary()
+    }
+
+    private fun request(
+        method: String,
+        path: String,
+        body: JSONObject? = null,
+        authenticated: Boolean = true
+    ): JSONObject {
         val url = URL("${AppConfig.backendBaseUrl}$path")
         val connection = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 15_000
             readTimeout = 30_000
-            setRequestProperty("Authorization", "Bearer ${AppConfig.backendApiToken}")
+            if (authenticated) {
+                setRequestProperty("Authorization", "Bearer ${AppConfig.backendApiToken}")
+            }
             setRequestProperty("Accept", "application/json")
             if (body != null) {
                 doOutput = true
@@ -110,6 +157,18 @@ class ApiClient {
         }
     }
 
+    private fun JSONArray.toMembershipPlans(): List<MembershipPlan> {
+        return (0 until length()).map { index ->
+            val plan = getJSONObject(index)
+            MembershipPlan(
+                id = plan.getString("id"),
+                name = plan.getString("name"),
+                stripePriceId = plan.getString("stripePriceId"),
+                description = plan.optStringOrNull("description")
+            )
+        }
+    }
+
     private fun JSONObject.toCustomerSummary(): CustomerSummary {
         return CustomerSummary(
             id = getLong("id"),
@@ -117,6 +176,15 @@ class ApiClient {
             name = optStringOrNull("name"),
             email = optStringOrNull("email"),
             phone = optStringOrNull("phone")
+        )
+    }
+
+    private fun JSONObject.toSubscriptionSummary(): SubscriptionSummary {
+        return SubscriptionSummary(
+            id = getLong("id"),
+            stripeSubscriptionId = getString("stripe_subscription_id"),
+            status = getString("status"),
+            stripePriceId = optStringOrNull("stripe_price_id")
         )
     }
 
@@ -128,4 +196,3 @@ class ApiClient {
         return java.net.URLEncoder.encode(this, Charsets.UTF_8.name())
     }
 }
-

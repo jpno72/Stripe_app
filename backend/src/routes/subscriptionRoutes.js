@@ -2,6 +2,7 @@ const express = require("express");
 const { asyncRoute } = require("../utils/asyncRoute");
 const { requireFields, parsePositiveInteger } = require("../utils/validation");
 const {
+  listMembershipPlans,
   createSubscription,
   readSubscription,
   findSubscriptions,
@@ -10,12 +11,21 @@ const {
 
 const router = express.Router();
 
+router.get(
+  "/plans",
+  asyncRoute(async (_req, res) => {
+    res.json({ plans: listMembershipPlans() });
+  })
+);
+
 router.post(
   "/",
   asyncRoute(async (req, res) => {
-    requireFields(req.body, ["customerId", "priceId"]);
+    requireFields(req.body, ["planId"]);
     const result = await createSubscription({
-      customerId: parsePositiveInteger(req.body.customerId, "customerId"),
+      customerId: req.body.customerId ? parsePositiveInteger(req.body.customerId, "customerId") : null,
+      customer: req.body.customer || null,
+      planId: req.body.planId,
       priceId: req.body.priceId,
       quantity: req.body.quantity ? parsePositiveInteger(req.body.quantity, "quantity") : 1,
       paymentBehavior: req.body.paymentBehavior,
@@ -59,4 +69,3 @@ router.post(
 );
 
 module.exports = { subscriptionRoutes: router };
-

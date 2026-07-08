@@ -3,6 +3,7 @@ const { env } = require("../config/env");
 const { logger } = require("../config/logger");
 const { createWebhookEvent } = require("../repositories/webhookRepository");
 const { updatePaymentFromIntent } = require("../repositories/paymentRepository");
+const { upsertInvoiceRecord } = require("../repositories/invoiceRepository");
 const { upsertCustomerRecord, getCustomerByStripeId } = require("../repositories/customerRepository");
 const { saveStripeSubscription } = require("./subscriptionService");
 
@@ -42,11 +43,34 @@ async function processStripeEvent(event) {
       await saveStripeSubscription(stripeSubscription, localCustomer ? localCustomer.id : null);
       break;
     }
+    case "invoice.created":
+    case "invoice.finalized":
+    case "invoice.paid":
+    case "invoice.payment_succeeded":
+    case "invoice.payment_failed":
+    case "invoice.voided":
+    case "invoice.marked_uncollectible": {
+      await saveStripeInvoice(event.data.object);
+      break;
+    }
     default:
       logger.info({ stripeEventId: event.id, type: event.type }, "stripe event stored without handler");
       break;
   }
 }
 
-module.exports = { constructStripeEvent, processStripeEvent };
+async function saveStripeInvoice(invoice) {
+  await upsertInvoiceRecord({
+    stripeInvoiceId: invoice.id,
+    stripeSubscriptionId: typeof invoice.subscription === "string" ? invoice.subscription : null,
+    stripeCustomerId: typeof invoice.customer === "string" ? invoice.customer : null,
+    status: invoice.status,
+    amountDue: invoice.amount_due,
+    amountPaid: invoice.amount_paid,
+    currency: invoice.currency,
+    hostedInvoiceUrl: invoice.hosted_invoice_url,
+    invoicePdf: invoice.invoice_pdf
+  });
+}
 
+module.exports = { constructStripeEvent, processStripeEvent };

@@ -59,11 +59,12 @@ class TerminalManager(
 
     fun discoverBluetoothReaders() {
         initializeTerminal()
-        listener.onStatus("Discovering Bluetooth readers...")
+        val mode = if (AppConfig.useSimulatedReader) "simulated" else "Bluetooth"
+        listener.onStatus("Discovering $mode readers...")
 
         val config = BluetoothDiscoveryConfiguration(
             timeout = 0,
-            isSimulated = false
+            isSimulated = AppConfig.useSimulatedReader
         )
 
         discoverCancelable = Terminal.getInstance().discoverReaders(

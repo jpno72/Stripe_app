@@ -1,4 +1,5 @@
 const { stripe } = require("../config/stripe");
+const { env } = require("../config/env");
 const {
   createCustomerRecord,
   getCustomerById,
@@ -7,6 +8,16 @@ const {
 const { HttpError } = require("../errors/httpError");
 
 async function createCustomer(input) {
+  if (env.localStripeMockMode) {
+    return createCustomerRecord({
+      stripeCustomerId: `cus_mock_phase3_${Date.now()}`,
+      name: input.name,
+      email: input.email,
+      phone: input.phone,
+      metadata: input.metadata || {}
+    });
+  }
+
   const stripeCustomer = await stripe.customers.create({
     name: input.name,
     email: input.email,
@@ -37,4 +48,3 @@ async function findCustomers(filters) {
 }
 
 module.exports = { createCustomer, readCustomer, findCustomers };
-
