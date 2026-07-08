@@ -3,6 +3,12 @@ const { env } = require("../config/env");
 const { getCustomerById } = require("../repositories/customerRepository");
 const { createCustomer } = require("./customerService");
 const {
+  getMockCustomerById,
+  createMockSubscriptionRecord,
+  getMockSubscriptionById,
+  listMockSubscriptions
+} = require("./mockStore");
+const {
   upsertSubscriptionRecord,
   getSubscriptionById,
   listSubscriptions
@@ -18,7 +24,7 @@ async function createSubscription(input) {
 
   if (env.localStripeMockMode) {
     const mockSubscription = createMockSubscription(customer, plan, input.metadata || {});
-    const record = await saveStripeSubscription(mockSubscription, customer.id);
+    const record = createMockSubscriptionRecord(mockSubscription, customer.id);
     return { subscription: record, stripeSubscription: mockSubscription, plan };
   }
 
@@ -47,6 +53,14 @@ function listMembershipPlans() {
 }
 
 async function readSubscription(id) {
+  if (env.localStripeMockMode) {
+    const subscription = getMockSubscriptionById(id);
+    if (!subscription) {
+      throw new HttpError(404, "Subscription not found");
+    }
+    return subscription;
+  }
+
   const subscription = await getSubscriptionById(id);
   if (!subscription) {
     throw new HttpError(404, "Subscription not found");
@@ -56,6 +70,10 @@ async function readSubscription(id) {
 }
 
 async function findSubscriptions(filters) {
+  if (env.localStripeMockMode) {
+    return listMockSubscriptions(filters);
+  }
+
   return listSubscriptions(filters);
 }
 
@@ -92,6 +110,9 @@ async function saveStripeSubscription(stripeSubscription, localCustomerId) {
 
 async function resolveCustomer(input) {
   if (input.customerId) {
+    if (env.localStripeMockMode) {
+      return getMockCustomerById(input.customerId);
+    }
     return getCustomerById(input.customerId);
   }
 
