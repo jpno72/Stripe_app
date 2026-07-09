@@ -1,0 +1,25 @@
+{
+  "name": "stripe-pos-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Internal Stripe Terminal POS and subscription backend API",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "check": "node --check src/server.js",
+    "check:all": "node scripts/check-all.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "helmet": "^8.0.0",
+    "mysql2": "^3.11.5",
+    "pino": "^9.5.0",
+    "pino-http": "^10.4.0",
+    "stripe": "^17.5.0"
+  }
+}

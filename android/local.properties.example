@@ -1,0 +1,9 @@
+# Copy this file to local.properties and fill in local development values.
+#
+# Android SDK path is usually managed by Android Studio:
+# sdk.dir=C\:\\Users\\YourName\\AppData\\Local\\Android\\Sdk
+
+backendBaseUrl=http://10.0.2.2:3000
+backendApiToken=replace_with_phase_1_API_TOKEN
+stripeLocationId=tml_replace_with_test_location_id
+useSimulatedReader=true
