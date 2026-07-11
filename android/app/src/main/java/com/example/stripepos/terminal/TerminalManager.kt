@@ -15,7 +15,6 @@ import com.stripe.stripeterminal.external.callable.ReaderCallback
 import com.stripe.stripeterminal.external.callable.TerminalListener
 import com.stripe.stripeterminal.external.models.ConnectionStatus
 import com.stripe.stripeterminal.external.models.DisconnectReason
-import com.stripe.stripeterminal.external.models.LogLevel
 import com.stripe.stripeterminal.external.models.PaymentIntent
 import com.stripe.stripeterminal.external.models.PaymentStatus
 import com.stripe.stripeterminal.external.models.Reader
@@ -25,6 +24,7 @@ import com.stripe.stripeterminal.external.models.ReaderSoftwareUpdate
 import com.stripe.stripeterminal.external.models.TerminalException
 import com.stripe.stripeterminal.external.models.ConnectionConfiguration.BluetoothConnectionConfiguration
 import com.stripe.stripeterminal.external.models.DiscoveryConfiguration.BluetoothDiscoveryConfiguration
+import com.stripe.stripeterminal.log.LogLevel
 
 class TerminalManager(
     private val context: Context,
@@ -224,7 +224,7 @@ class TerminalManager(
         listener.onStatus("Reader update available. Manual test should cover update flow.")
     }
 
-    override fun onStartInstallingUpdate(update: ReaderSoftwareUpdate, cancelable: Cancelable) {
+    override fun onStartInstallingUpdate(update: ReaderSoftwareUpdate, cancelable: Cancelable?) {
         listener.onStatus("Installing reader update...")
     }
 
