@@ -4,12 +4,19 @@ const { createTerminalConnectionToken } = require("../services/paymentService");
 
 const router = express.Router();
 
+const createConnectionToken = asyncRoute(async (_req, res) => {
+  const token = await createTerminalConnectionToken();
+  res.json({ secret: token.secret });
+});
+
+router.post(
+  "/connection_token",
+  createConnectionToken
+);
+
 router.post(
   "/connection-token",
-  asyncRoute(async (_req, res) => {
-    const token = await createTerminalConnectionToken();
-    res.json({ secret: token.secret });
-  })
+  createConnectionToken
 );
 
 module.exports = { terminalRoutes: router };

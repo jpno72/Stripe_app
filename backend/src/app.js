@@ -8,6 +8,7 @@ const { notFound, errorHandler } = require("./middleware/errorHandler");
 const { healthRoutes } = require("./routes/healthRoutes");
 const { terminalRoutes } = require("./routes/terminalRoutes");
 const { paymentRoutes } = require("./routes/paymentRoutes");
+const { setupIntentRoutes } = require("./routes/setupIntentRoutes");
 const { customerRoutes } = require("./routes/customerRoutes");
 const { subscriptionRoutes } = require("./routes/subscriptionRoutes");
 const { webhookRoutes } = require("./routes/webhookRoutes");
@@ -28,6 +29,7 @@ function createApp() {
 
   app.use("/api/v1/terminal", terminalRoutes);
   app.use("/api/v1/payment-intents", paymentRoutes);
+  app.use("/api/v1/setup-intents", setupIntentRoutes);
   app.use("/api/v1/customers", customerRoutes);
   app.use("/api/v1/subscriptions", subscriptionRoutes);
 

@@ -8,7 +8,8 @@ This phase does not include Android files and does not claim real Stripe Reader 
 
 - Node.js 18+
 - Express
-- MySQL or MariaDB
+- Stripe-only persistence by default
+- Optional MySQL or MariaDB persistence for future reporting/admin history
 - Stripe Node SDK
 - Bearer-token protection for internal API routes
 - Stripe webhook signature verification
@@ -43,7 +44,7 @@ cd backend
 npm install
 ```
 
-1. Create the database:
+1. Optional: create the database only if you set `PERSISTENCE_MODE=database`:
 
 ```sql
 CREATE DATABASE stripe_pos CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -52,7 +53,7 @@ GRANT ALL PRIVILEGES ON stripe_pos.* TO 'stripe_pos_user'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
-1. Load the schema:
+1. Optional: load the schema only if you set `PERSISTENCE_MODE=database`:
 
 ```bash
 mysql -u stripe_pos_user -p stripe_pos < sql/schema.sql
@@ -71,15 +72,14 @@ Edit `.env` and set:
 - `STRIPE_WEBHOOK_SECRET`
 - `APP_NAME`
 - `DEFAULT_CURRENCY`
+- `PERSISTENCE_MODE`
 - `LOCAL_STRIPE_MOCK_MODE`
 - `MEMBERSHIP_PLANS_JSON`
-- `DB_HOST`
-- `DB_PORT`
-- `DB_USER`
-- `DB_PASSWORD`
-- `DB_NAME`
+- `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME` only when `PERSISTENCE_MODE=database`
 
-For Phase 2 local smoke testing, `LOCAL_STRIPE_MOCK_MODE=true` lets the connection-token and card-present PaymentIntent endpoints return mock responses without calling Stripe or writing payment rows to MySQL. Use `LOCAL_STRIPE_MOCK_MODE=false` only when you have real Stripe test keys, a database, and are ready for Stripe SDK testing.
+`PERSISTENCE_MODE=stripe` is the current default. In this mode, Stripe is the source of truth and normal customer, payment, subscription, and webhook flows do not require MySQL. Use `PERSISTENCE_MODE=database` later if you want local reporting/admin history tables.
+
+For local smoke testing, `LOCAL_STRIPE_MOCK_MODE=true` lets the connection-token and card-present PaymentIntent endpoints return mock responses without calling Stripe. Use `LOCAL_STRIPE_MOCK_MODE=false` when you have real Stripe test keys and are ready for Stripe SDK testing.
 
 Windows PowerShell setup from the repository root:
 
@@ -93,6 +93,7 @@ For quick Phase 2 local testing, keep these values aligned between backend `.env
 
 ```text
 API_TOKEN=replace_with_a_long_random_internal_token
+PERSISTENCE_MODE=stripe
 LOCAL_STRIPE_MOCK_MODE=true
 ```
 
@@ -114,6 +115,8 @@ Check JavaScript syntax:
 npm run check:all
 ```
 
+If real Stripe calls fail from Node with `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, configure Node to trust your local HTTPS inspection/root CA using `NODE_EXTRA_CA_CERTS` before starting the backend. Do not disable TLS verification for production.
+
 For production:
 
 ```bash
@@ -134,7 +137,7 @@ All `/api/v1/*` routes require:
 Authorization: Bearer YOUR_API_TOKEN
 ```
 
-The Stripe webhook route is not protected by this token because it uses Stripe signature verification.
+The Stripe webhook route is not protected by this token because it uses Stripe signature verification. In `PERSISTENCE_MODE=stripe`, verified events are acknowledged without requiring database writes.
 
 ## API Endpoints
 
@@ -143,7 +146,7 @@ The Stripe webhook route is not protected by this token because it uses Stripe s
 Creates a Stripe Terminal connection token for the Android Terminal SDK.
 
 ```http
-POST /api/v1/terminal/connection-token
+POST /api/v1/terminal/connection_token
 ```
 
 Response:
@@ -174,11 +177,69 @@ Body:
 {
   "amount": 2500,
   "currency": "usd",
-  "customerId": 1,
+  "customerId": "cus_...",
   "description": "In-person class purchase",
   "metadata": {
     "source": "android_pos"
   }
+}
+```
+
+### Reusable Payment Method SetupIntent
+
+Creates a Stripe SetupIntent for saving a reusable customer card for subscriptions and future off-session invoices.
+
+```http
+POST /api/v1/setup-intents
+```
+
+Body:
+
+```json
+{
+  "customerId": "cus_...",
+  "metadata": {
+    "source": "membership_setup"
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "setupIntent": {
+    "id": "seti_...",
+    "client_secret": "seti_..._secret_...",
+    "customer": "cus_...",
+    "status": "requires_payment_method",
+    "usage": "off_session",
+    "payment_method_types": ["card"]
+  }
+}
+```
+
+Use the returned `client_secret` in the client app to collect and save the customer's reusable card. After the SetupIntent succeeds, subscription creation can use the customer's default reusable payment method and should become `active` when the first invoice is paid.
+
+After the client confirms the SetupIntent successfully, set the saved card as the customer's default invoice payment method:
+
+```http
+POST /api/v1/setup-intents/:id/default-payment-method
+```
+
+Response:
+
+```json
+{
+  "setupIntent": {
+    "id": "seti_...",
+    "status": "succeeded",
+    "customer": "cus_..."
+  },
+  "customer": {
+    "id": "cus_..."
+  },
+  "defaultPaymentMethod": "pm_..."
 }
 ```
 
@@ -242,7 +303,7 @@ Handled event families:
 - `invoice.voided`
 - `invoice.marked_uncollectible`
 
-All webhook payloads are stored in `webhook_events`.
+When `PERSISTENCE_MODE=database`, webhook payloads are stored in `webhook_events`. In the default Stripe-only mode, Stripe remains the event source of truth and the backend only verifies and acknowledges the event.
 
 ## Curl Examples
 
@@ -285,14 +346,14 @@ curl "$API_BASE/api/v1/customers?q=Jane" \
 Read customer:
 
 ```bash
-curl "$API_BASE/api/v1/customers/1" \
+curl "$API_BASE/api/v1/customers/cus_..." \
   -H "Authorization: Bearer $API_TOKEN"
 ```
 
 Create Terminal connection token:
 
 ```bash
-curl -X POST "$API_BASE/api/v1/terminal/connection-token" \
+curl -X POST "$API_BASE/api/v1/terminal/connection_token" \
   -H "Authorization: Bearer $API_TOKEN"
 ```
 
@@ -305,12 +366,33 @@ curl -X POST "$API_BASE/api/v1/payment-intents/card-present" \
   -d '{
     "amount": 2500,
     "currency": "usd",
-    "customerId": 1,
+    "customerId": "cus_...",
     "description": "In-person class purchase",
     "metadata": {
       "checkout_device": "future_android_app"
     }
   }'
+```
+
+Create reusable payment method SetupIntent:
+
+```bash
+curl -X POST "$API_BASE/api/v1/setup-intents" \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "customerId": "cus_...",
+    "metadata": {
+      "source": "membership_setup"
+    }
+  }'
+```
+
+Set successful SetupIntent payment method as customer default:
+
+```bash
+curl -X POST "$API_BASE/api/v1/setup-intents/seti_.../default-payment-method" \
+  -H "Authorization: Bearer $API_TOKEN"
 ```
 
 Phase 3 subscription example, not part of current Phase 2 testing:
@@ -320,7 +402,7 @@ curl -X POST "$API_BASE/api/v1/subscriptions" \
   -H "Authorization: Bearer $API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "customerId": 1,
+    "customerId": "cus_...",
     "planId": "basic",
     "quantity": 1,
     "metadata": {
@@ -332,14 +414,14 @@ curl -X POST "$API_BASE/api/v1/subscriptions" \
 Phase 3 list subscriptions example:
 
 ```bash
-curl "$API_BASE/api/v1/subscriptions?customerId=1" \
+curl "$API_BASE/api/v1/subscriptions?customerId=cus_..." \
   -H "Authorization: Bearer $API_TOKEN"
 ```
 
 Phase 3 cancel subscription at period end example:
 
 ```bash
-curl -X POST "$API_BASE/api/v1/subscriptions/1/cancel" \
+curl -X POST "$API_BASE/api/v1/subscriptions/sub_.../cancel" \
   -H "Authorization: Bearer $API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -350,7 +432,7 @@ curl -X POST "$API_BASE/api/v1/subscriptions/1/cancel" \
 Phase 3 cancel subscription immediately example:
 
 ```bash
-curl -X POST "$API_BASE/api/v1/subscriptions/1/cancel" \
+curl -X POST "$API_BASE/api/v1/subscriptions/sub_.../cancel" \
   -H "Authorization: Bearer $API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -372,7 +454,9 @@ stripe trigger customer.created
 stripe trigger customer.subscription.created
 ```
 
-## Database Tables
+## Optional Database Tables
+
+These tables are used only when `PERSISTENCE_MODE=database`:
 
 - `customers`
 - `payments`
@@ -392,7 +476,7 @@ These notes are practical starting points because cPanel setups vary by host.
 1. Set the application startup file to `src/server.js`.
 1. Add the environment variables from `.env.example` through cPanel's Node.js app environment variable UI. Do not upload real secrets into Git.
 1. Run `npm install` from cPanel Terminal or the Node.js app screen.
-1. Import `sql/schema.sql` into the MySQL/MariaDB database through phpMyAdmin or cPanel Terminal.
+1. If using `PERSISTENCE_MODE=database`, import `sql/schema.sql` into the MySQL/MariaDB database through phpMyAdmin or cPanel Terminal.
 1. Make sure the public URL routes `/webhooks/stripe` to this Node app.
 1. In Stripe Dashboard, create a webhook endpoint pointing to `https://your-domain.com/webhooks/stripe` and copy its signing secret into `STRIPE_WEBHOOK_SECRET`.
 1. If the app is mounted under a subpath, configure cPanel routing or a reverse proxy so `/api/v1/*` and `/webhooks/stripe` reach this Express app unchanged.
@@ -401,17 +485,17 @@ These notes are practical starting points because cPanel setups vary by host.
 
 - Start the server with valid `.env` values.
 - Confirm `GET /health` returns `{ "ok": true }`.
-- For Phase 2 smoke testing, confirm `LOCAL_STRIPE_MOCK_MODE=true` is set.
+- Confirm `PERSISTENCE_MODE=stripe` for the current Stripe-only setup.
+- For local smoke testing, confirm `LOCAL_STRIPE_MOCK_MODE=true` is set.
 - Confirm `/api/v1/*` requests without `Authorization` return `401`.
-- Create a customer and confirm a row exists in `customers`.
+- Create a customer and confirm it exists in Stripe Dashboard.
 - Search and read that customer.
 - Create a Terminal connection token with a Stripe test secret key.
 - Create a card-present PaymentIntent and confirm `payment_method_types` is `["card_present"]` in Stripe Dashboard.
-- Confirm a row exists in `payments`.
-- Leave subscription create/read/cancel testing for Phase 3.
-- Use Stripe CLI to forward webhooks and confirm verified events are stored in `webhook_events`.
+- Create/read/cancel subscriptions using Stripe IDs.
+- Use Stripe CLI to forward webhooks and confirm verified events return success.
 - Confirm webhook calls with an invalid signature are rejected.
-- Confirm API calls create rows in `audit_logs`.
+- If using `PERSISTENCE_MODE=database`, confirm local rows are created in `customers`, `payments`, `subscriptions`, `webhook_events`, and `audit_logs`.
 - Before live use, test with the real Android app, Stripe Terminal SDK, and Reader M2 in Stripe test mode.
 
 ## Phase 2 Local Smoke Test Commands
@@ -435,7 +519,7 @@ Invoke-RestMethod "$base/health"
 
 Invoke-RestMethod `
   -Method Post `
-  -Uri "$base/api/v1/terminal/connection-token" `
+  -Uri "$base/api/v1/terminal/connection_token" `
   -Headers @{ Authorization = "Bearer $token" }
 
 Invoke-RestMethod `
@@ -444,6 +528,24 @@ Invoke-RestMethod `
   -Headers @{ Authorization = "Bearer $token" } `
   -ContentType "application/json" `
   -Body '{"amount":100,"currency":"usd","description":"Phase 2 smoke test"}'
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "$base/api/v1/setup-intents" `
+  -Headers @{ Authorization = "Bearer $token" } `
+  -ContentType "application/json" `
+  -Body '{"customerId":"cus_replace_with_test_customer","metadata":{"source":"membership_setup"}}'
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "$base/api/v1/setup-intents/seti_replace_with_succeeded_setup_intent/default-payment-method" `
+  -Headers @{ Authorization = "Bearer $token" }
+```
+
+Exact Terminal connection-token test command:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri "http://localhost:3000/api/v1/terminal/connection_token" -Headers @{ Authorization = "Bearer replace_with_a_long_random_internal_token" }
 ```
 
 ## Production Notes

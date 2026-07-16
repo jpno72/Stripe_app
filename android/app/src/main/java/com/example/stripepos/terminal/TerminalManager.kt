@@ -120,7 +120,7 @@ class TerminalManager(
         )
     }
 
-    fun collectAndProcessPayment(amount: Int, currency: String, customerId: Long?) {
+    fun collectAndProcessPayment(amount: Int, currency: String, customerId: String?) {
         initializeTerminal()
         listener.onStatus("Creating card-present PaymentIntent...")
 

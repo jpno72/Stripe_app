@@ -1,9 +1,17 @@
-require("dotenv").config({ override: true });
+const path = require("path");
 
-const required = [
+require("dotenv").config({
+  path: path.resolve(__dirname, "../../.env"),
+  override: true
+});
+
+const baseRequired = [
   "API_TOKEN",
   "STRIPE_SECRET_KEY",
-  "STRIPE_WEBHOOK_SECRET",
+  "STRIPE_WEBHOOK_SECRET"
+];
+
+const databaseRequired = [
   "DB_HOST",
   "DB_USER",
   "DB_PASSWORD",
@@ -11,6 +19,9 @@ const required = [
 ];
 
 function requireEnv() {
+  const required = env.useDatabasePersistence
+    ? baseRequired.concat(databaseRequired)
+    : baseRequired;
   const missing = required.filter((key) => !process.env[key]);
   if (missing.length > 0) {
     throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
@@ -44,6 +55,7 @@ const env = {
   appName: process.env.APP_NAME || "Internal Stripe POS Backend",
   defaultCurrency: (process.env.DEFAULT_CURRENCY || "usd").toLowerCase(),
   localStripeMockMode: process.env.LOCAL_STRIPE_MOCK_MODE === "true",
+  persistenceMode: (process.env.PERSISTENCE_MODE || "stripe").trim().toLowerCase(),
   apiToken: process.env.API_TOKEN,
   stripeSecretKey: process.env.STRIPE_SECRET_KEY,
   stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
@@ -58,5 +70,8 @@ const env = {
   },
   membershipPlans: parseMembershipPlans()
 };
+
+env.useDatabasePersistence = env.persistenceMode === "database";
+env.useStripeOnlyPersistence = !env.useDatabasePersistence;
 
 module.exports = { env, requireEnv };

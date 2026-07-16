@@ -1,8 +1,9 @@
 const { createAuditLog } = require("../repositories/auditRepository");
+const { env } = require("../config/env");
 const { logger } = require("../config/logger");
 
 function auditRequests(req, res, next) {
-  if (!req.originalUrl.startsWith("/api/")) {
+  if (!req.originalUrl.startsWith("/api/") || !env.useDatabasePersistence) {
     return next();
   }
 

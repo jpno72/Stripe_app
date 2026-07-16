@@ -54,6 +54,7 @@ android/
 ```properties
 backendBaseUrl=http://10.0.2.2:3000
 backendApiToken=replace_with_phase_1_API_TOKEN
+stripePublishableKey=pk_test_...
 stripeLocationId=tml_replace_with_test_location_id
 useSimulatedReader=true
 ```
@@ -76,6 +77,8 @@ The Android app expects these existing backend routes:
 GET  /health
 POST /api/v1/terminal/connection-token
 POST /api/v1/payment-intents/card-present
+POST /api/v1/setup-intents
+POST /api/v1/setup-intents/:id/default-payment-method
 GET  /api/v1/customers?q=...
 POST /api/v1/customers
 ```

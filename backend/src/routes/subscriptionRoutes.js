@@ -1,6 +1,7 @@
 const express = require("express");
 const { asyncRoute } = require("../utils/asyncRoute");
 const { requireFields, parsePositiveInteger } = require("../utils/validation");
+const { env } = require("../config/env");
 const {
   listMembershipPlans,
   createSubscription,
@@ -23,7 +24,7 @@ router.post(
   asyncRoute(async (req, res) => {
     requireFields(req.body, ["planId"]);
     const result = await createSubscription({
-      customerId: req.body.customerId ? parsePositiveInteger(req.body.customerId, "customerId") : null,
+      customerId: req.body.customerId ? parseId(req.body.customerId, "customerId") : null,
       customer: req.body.customer || null,
       planId: req.body.planId,
       priceId: req.body.priceId,
@@ -42,7 +43,7 @@ router.get(
   "/",
   asyncRoute(async (req, res) => {
     const subscriptions = await findSubscriptions({
-      customerId: req.query.customerId ? parsePositiveInteger(req.query.customerId, "customerId") : null,
+      customerId: req.query.customerId ? parseId(req.query.customerId, "customerId") : null,
       status: req.query.status
     });
     res.json({ subscriptions });
@@ -52,7 +53,7 @@ router.get(
 router.get(
   "/:id",
   asyncRoute(async (req, res) => {
-    const subscription = await readSubscription(parsePositiveInteger(req.params.id, "id"));
+    const subscription = await readSubscription(parseId(req.params.id, "id"));
     res.json({ subscription });
   })
 );
@@ -61,7 +62,7 @@ router.post(
   "/:id/cancel",
   asyncRoute(async (req, res) => {
     const result = await cancelSubscription(
-      parsePositiveInteger(req.params.id, "id"),
+      parseId(req.params.id, "id"),
       req.body.cancelAtPeriodEnd === true
     );
     res.json(result);
@@ -69,3 +70,7 @@ router.post(
 );
 
 module.exports = { subscriptionRoutes: router };
+
+function parseId(value, fieldName) {
+  return env.useDatabasePersistence ? parsePositiveInteger(value, fieldName) : String(value);
+}

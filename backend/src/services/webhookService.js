@@ -12,6 +12,11 @@ function constructStripeEvent(rawBody, signature) {
 }
 
 async function processStripeEvent(event) {
+  if (env.useStripeOnlyPersistence) {
+    logger.info({ stripeEventId: event.id, type: event.type }, "stripe event verified");
+    return;
+  }
+
   await createWebhookEvent(event);
 
   switch (event.type) {

@@ -15,7 +15,7 @@ data class BackendPaymentIntent(
 )
 
 data class CustomerSummary(
-    val id: Long,
+    val id: String,
     val stripeCustomerId: String,
     val name: String?,
     val email: String?,
@@ -38,10 +38,22 @@ data class MembershipPlan(
 }
 
 data class SubscriptionSummary(
-    val id: Long,
+    val id: String,
     val stripeSubscriptionId: String,
     val status: String,
     val stripePriceId: String?
+)
+
+data class SetupIntentSummary(
+    val id: String,
+    val clientSecret: String,
+    val status: String
+)
+
+data class DefaultPaymentMethodSummary(
+    val setupIntentId: String,
+    val customerId: String,
+    val defaultPaymentMethodId: String
 )
 
 class ApiClient {
@@ -58,7 +70,7 @@ class ApiClient {
     fun createCardPresentPaymentIntent(
         amount: Int,
         currency: String,
-        customerId: Long?
+        customerId: String?
     ): BackendPaymentIntent {
         val body = JSONObject()
             .put("amount", amount)
@@ -101,7 +113,7 @@ class ApiClient {
         return json.getJSONArray("plans").toMembershipPlans()
     }
 
-    fun createSubscription(customerId: Long, planId: String): SubscriptionSummary {
+    fun createSubscription(customerId: String, planId: String): SubscriptionSummary {
         // Recurring billing requires the Stripe Customer to have a reusable payment method.
         // A Terminal card-present payment does not by itself save a reusable subscription payment method.
         val body = JSONObject()
@@ -111,6 +123,33 @@ class ApiClient {
 
         val json = request("POST", "/api/v1/subscriptions", body)
         return json.getJSONObject("subscription").toSubscriptionSummary()
+    }
+
+    fun createSetupIntent(customerId: String): SetupIntentSummary {
+        val body = JSONObject()
+            .put("customerId", customerId)
+            .put("metadata", JSONObject().put("source", "android_membership_setup"))
+
+        val json = request("POST", "/api/v1/setup-intents", body)
+        val setupIntent = json.getJSONObject("setupIntent")
+
+        return SetupIntentSummary(
+            id = setupIntent.getString("id"),
+            clientSecret = setupIntent.getString("client_secret"),
+            status = setupIntent.getString("status")
+        )
+    }
+
+    fun setDefaultPaymentMethodFromSetupIntent(setupIntentId: String): DefaultPaymentMethodSummary {
+        val json = request("POST", "/api/v1/setup-intents/$setupIntentId/default-payment-method")
+        val setupIntent = json.getJSONObject("setupIntent")
+        val customer = json.getJSONObject("customer")
+
+        return DefaultPaymentMethodSummary(
+            setupIntentId = setupIntent.getString("id"),
+            customerId = customer.getString("id"),
+            defaultPaymentMethodId = json.getString("defaultPaymentMethod")
+        )
     }
 
     private fun request(
@@ -171,7 +210,7 @@ class ApiClient {
 
     private fun JSONObject.toCustomerSummary(): CustomerSummary {
         return CustomerSummary(
-            id = getLong("id"),
+            id = getString("id"),
             stripeCustomerId = getString("stripe_customer_id"),
             name = optStringOrNull("name"),
             email = optStringOrNull("email"),
@@ -181,7 +220,7 @@ class ApiClient {
 
     private fun JSONObject.toSubscriptionSummary(): SubscriptionSummary {
         return SubscriptionSummary(
-            id = getLong("id"),
+            id = getString("id"),
             stripeSubscriptionId = getString("stripe_subscription_id"),
             status = getString("status"),
             stripePriceId = optStringOrNull("stripe_price_id")

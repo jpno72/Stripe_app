@@ -1,6 +1,7 @@
 const express = require("express");
 const { asyncRoute } = require("../utils/asyncRoute");
 const { requireFields, parsePositiveInteger } = require("../utils/validation");
+const { env } = require("../config/env");
 const { createCustomer, readCustomer, findCustomers } = require("../services/customerService");
 
 const router = express.Router();
@@ -34,10 +35,14 @@ router.get(
 router.get(
   "/:id",
   asyncRoute(async (req, res) => {
-    const customer = await readCustomer(parsePositiveInteger(req.params.id, "id"));
+    const customer = await readCustomer(parseId(req.params.id, "id"));
     res.json({ customer });
   })
 );
 
 module.exports = { customerRoutes: router };
+
+function parseId(value, fieldName) {
+  return env.useDatabasePersistence ? parsePositiveInteger(value, fieldName) : value;
+}
 

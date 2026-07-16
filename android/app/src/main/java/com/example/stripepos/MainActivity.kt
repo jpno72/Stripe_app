@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -21,11 +22,15 @@ import com.example.stripepos.data.CustomerSummary
 import com.example.stripepos.data.MembershipPlan
 import com.example.stripepos.terminal.TerminalManager
 import com.google.android.material.textfield.TextInputEditText
+import com.stripe.android.PaymentConfiguration
+import com.stripe.android.paymentsheet.PaymentSheet
+import com.stripe.android.paymentsheet.PaymentSheetResult
 import com.stripe.stripeterminal.external.models.Reader
 
 class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
     private lateinit var terminalManager: TerminalManager
     private val apiClient = ApiClient()
+    private lateinit var paymentSheet: PaymentSheet
 
     private lateinit var statusText: TextView
     private lateinit var selectedReaderText: TextView
@@ -37,13 +42,20 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
     private var discoveredReaders: List<Reader> = emptyList()
     private var foundCustomers: List<CustomerSummary> = emptyList()
     private var membershipPlans: List<MembershipPlan> = emptyList()
-    private var selectedCustomerId: Long? = null
+    private var selectedCustomerId: String? = null
     private var selectedPlan: MembershipPlan? = null
+    private var pendingSetupCustomerId: String? = null
+    private var pendingSetupPlanId: String? = null
+    private var pendingSetupIntentId: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        installCrashLogger()
+        PaymentConfiguration.init(applicationContext, AppConfig.stripePublishableKey)
+        paymentSheet = PaymentSheet(this, ::onSetupPaymentSheetResult)
         terminalManager = TerminalManager(this, this, apiClient)
         setContentView(buildContentView())
+        showPreviousCrashIfPresent()
         requestRuntimePermissions()
     }
 
@@ -217,6 +229,53 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
             }
         })
 
+        root.addView(Button(this).withText("Save Card & Create Membership Subscription").withClick {
+            val customerId = selectedCustomerId
+            val plan = selectedPlan
+
+            if (!AppConfig.stripePublishableKey.startsWith("pk_test_") && !AppConfig.stripePublishableKey.startsWith("pk_live_")) {
+                onPaymentFailed("Stripe publishable key is missing or invalid")
+                return@withClick
+            }
+
+            if (customerId == null) {
+                Toast.makeText(this, "Select or create a customer first", Toast.LENGTH_SHORT).show()
+                return@withClick
+            }
+
+            if (plan == null) {
+                Toast.makeText(this, "Select a membership plan first", Toast.LENGTH_SHORT).show()
+                return@withClick
+            }
+
+            runNetworkAction("Creating card setup session...") {
+                Log.i(TAG, "Creating SetupIntent for customer $customerId")
+                val setupIntent = apiClient.createSetupIntent(customerId)
+                Log.i(TAG, "SetupIntent ${setupIntent.id} returned with status ${setupIntent.status}")
+                runOnUiThread {
+                    pendingSetupCustomerId = customerId
+                    pendingSetupPlanId = plan.id
+                    pendingSetupIntentId = setupIntent.id
+                    onStatus("Collecting reusable card...")
+                    try {
+                        Log.i(TAG, "Presenting PaymentSheet for SetupIntent ${setupIntent.id}")
+                        paymentSheet.presentWithSetupIntent(
+                            setupIntent.clientSecret,
+                            PaymentSheet.Configuration(
+                                merchantDisplayName = "Bloom MMA"
+                            )
+                        )
+                    } catch (error: Throwable) {
+                        Log.e(TAG, "Unable to present PaymentSheet", error)
+                        pendingSetupCustomerId = null
+                        pendingSetupPlanId = null
+                        pendingSetupIntentId = null
+                        onPaymentFailed("Unable to open Stripe card form: ${error.message}")
+                    }
+                }
+            }
+        })
+
         root.addView(sectionTitle("Payment"))
         val amountInput = input("Amount in cents, e.g. 2500")
         amountInput.setText("2500")
@@ -322,6 +381,71 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
         }
     }
 
+    private fun onSetupPaymentSheetResult(result: PaymentSheetResult) {
+        when (result) {
+            is PaymentSheetResult.Completed -> {
+                Log.i(TAG, "PaymentSheet setup completed")
+                val customerId = pendingSetupCustomerId
+                val planId = pendingSetupPlanId
+                val setupIntentId = pendingSetupIntentId
+                pendingSetupCustomerId = null
+                pendingSetupPlanId = null
+                pendingSetupIntentId = null
+
+                if (customerId == null || planId == null || setupIntentId == null) {
+                    onPaymentFailed("Card saved, but membership selection was lost")
+                    return
+                }
+
+                runNetworkAction("Card saved. Setting default payment method...") {
+                    apiClient.setDefaultPaymentMethodFromSetupIntent(setupIntentId)
+                    onStatus("Default payment method saved. Creating subscription...")
+                    val subscription = apiClient.createSubscription(customerId, planId)
+                    runOnUiThread {
+                        onStatus("Subscription ${subscription.stripeSubscriptionId}: ${subscription.status}")
+                    }
+                }
+            }
+            is PaymentSheetResult.Canceled -> {
+                Log.i(TAG, "PaymentSheet setup canceled")
+                pendingSetupCustomerId = null
+                pendingSetupPlanId = null
+                pendingSetupIntentId = null
+                onStatus("Card setup canceled")
+            }
+            is PaymentSheetResult.Failed -> {
+                Log.e(TAG, "PaymentSheet setup failed", result.error)
+                pendingSetupCustomerId = null
+                pendingSetupPlanId = null
+                pendingSetupIntentId = null
+                onPaymentFailed("Card setup failed: ${result.error.localizedMessage}")
+            }
+        }
+    }
+
+    private fun installCrashLogger() {
+        val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+            getSharedPreferences(CRASH_PREFS, MODE_PRIVATE)
+                .edit()
+                .putString(LAST_CRASH_KEY, error.stackTraceToString())
+                .apply()
+            Log.e(TAG, "Unhandled crash", error)
+            previousHandler?.uncaughtException(thread, error)
+        }
+    }
+
+    private fun showPreviousCrashIfPresent() {
+        val prefs = getSharedPreferences(CRASH_PREFS, MODE_PRIVATE)
+        val previousCrash = prefs.getString(LAST_CRASH_KEY, null) ?: return
+        prefs.edit().remove(LAST_CRASH_KEY).apply()
+
+        val firstLine = previousCrash.lineSequence().firstOrNull().orEmpty()
+        Log.e(TAG, "Previous crash:\n$previousCrash")
+        onStatus("Previous app crash: $firstLine")
+        Toast.makeText(this, "Previous app crash: $firstLine", Toast.LENGTH_LONG).show()
+    }
+
     private fun runNetworkAction(status: String, action: () -> Unit) {
         onStatus(status)
         Thread {
@@ -364,6 +488,9 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
     }
 
     companion object {
+        private const val TAG = "StripePos"
+        private const val CRASH_PREFS = "stripe_pos_crashes"
+        private const val LAST_CRASH_KEY = "last_crash"
         private const val REQUEST_CODE_PERMISSIONS = 1001
     }
 }
