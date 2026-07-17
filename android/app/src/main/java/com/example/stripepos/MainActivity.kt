@@ -2,6 +2,9 @@ package com.example.stripepos
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -35,14 +38,17 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
     private lateinit var statusText: TextView
     private lateinit var selectedReaderText: TextView
     private lateinit var selectedCustomerText: TextView
+    private lateinit var selectedPlanText: TextView
     private lateinit var readersAdapter: ArrayAdapter<String>
     private lateinit var customersAdapter: ArrayAdapter<String>
     private lateinit var plansAdapter: ArrayAdapter<String>
+    private lateinit var paymentMethodsAdapter: ArrayAdapter<String>
 
     private var discoveredReaders: List<Reader> = emptyList()
     private var foundCustomers: List<CustomerSummary> = emptyList()
     private var membershipPlans: List<MembershipPlan> = emptyList()
     private var selectedCustomerId: String? = null
+    private var selectedCustomer: CustomerSummary? = null
     private var selectedPlan: MembershipPlan? = null
     private var pendingSetupCustomerId: String? = null
     private var pendingSetupPlanId: String? = null
@@ -125,7 +131,7 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
         root.addView(readersList, LinearLayout.LayoutParams.MATCH_PARENT, 240)
 
         root.addView(sectionTitle("Customer"))
-        selectedCustomerText = TextView(this).withText("No customer selected")
+        selectedCustomerText = selectionPanel("No customer selected")
         root.addView(selectedCustomerText)
 
         val customerSearchInput = input("Search name, email, or phone")
@@ -147,8 +153,7 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
             adapter = customersAdapter
             setOnItemClickListener { _, _, position, _ ->
                 foundCustomers.getOrNull(position)?.let { customer ->
-                    selectedCustomerId = customer.id
-                    selectedCustomerText.text = "Selected: ${customer}"
+                    selectCustomer(customer)
                 }
             }
         }
@@ -174,14 +179,30 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
                     phone = customerPhoneInput.text.toString()
                 )
                 runOnUiThread {
-                    selectedCustomerId = customer.id
-                    selectedCustomerText.text = "Selected: $customer"
+                    selectCustomer(customer)
                     onStatus("Customer created")
                 }
             }
         })
 
+        root.addView(sectionTitle("Customer Payment Methods"))
+        paymentMethodsAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, mutableListOf("Select a customer to load payment methods"))
+        val paymentMethodsList = ListView(this).apply {
+            adapter = paymentMethodsAdapter
+        }
+        root.addView(paymentMethodsList, LinearLayout.LayoutParams.MATCH_PARENT, 180)
+        root.addView(Button(this).withText("Refresh Customer Payment Methods").withClick {
+            val customerId = selectedCustomerId
+            if (customerId == null) {
+                Toast.makeText(this, "Select or create a customer first", Toast.LENGTH_SHORT).show()
+                return@withClick
+            }
+            refreshPaymentMethods(customerId)
+        })
+
         root.addView(sectionTitle("Membership Subscription"))
+        selectedPlanText = selectionPanel("No membership product selected")
+        root.addView(selectedPlanText)
         root.addView(TextView(this).withText("Recurring billing requires a reusable Stripe payment method on the customer. Terminal card-present payments do not automatically save one for future membership billing."))
         root.addView(Button(this).withText("Load Membership Plans").withClick {
             runNetworkAction("Loading membership plans...") {
@@ -200,8 +221,7 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
             adapter = plansAdapter
             setOnItemClickListener { _, _, position, _ ->
                 membershipPlans.getOrNull(position)?.let { plan ->
-                    selectedPlan = plan
-                    onStatus("Selected membership plan: ${plan.name}")
+                    selectPlan(plan)
                 }
             }
         }
@@ -404,6 +424,7 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
                     runOnUiThread {
                         onStatus("Subscription ${subscription.stripeSubscriptionId}: ${subscription.status}")
                     }
+                    refreshPaymentMethods(customerId, showLoadingStatus = false)
                 }
             }
             is PaymentSheetResult.Canceled -> {
@@ -455,6 +476,64 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
                 onPaymentFailed(error.message ?: "Network request failed")
             }
         }.start()
+    }
+
+    private fun selectCustomer(customer: CustomerSummary) {
+        selectedCustomer = customer
+        selectedCustomerId = customer.id
+        selectedCustomerText.text = "Working customer\n${customer}"
+        refreshPaymentMethods(customer.id)
+    }
+
+    private fun selectPlan(plan: MembershipPlan) {
+        selectedPlan = plan
+        selectedPlanText.text = "Selected product\n${plan}"
+        onStatus("Selected membership product: ${plan.name}")
+    }
+
+    private fun refreshPaymentMethods(customerId: String, showLoadingStatus: Boolean = true) {
+        if (showLoadingStatus) {
+            onStatus("Loading customer payment methods...")
+        }
+        Thread {
+            try {
+                val paymentMethods = apiClient.fetchCustomerPaymentMethods(customerId)
+                runOnUiThread {
+                    paymentMethodsAdapter.clear()
+                    if (paymentMethods.isEmpty()) {
+                        paymentMethodsAdapter.add("No reusable payment methods on file")
+                    } else {
+                        paymentMethodsAdapter.addAll(paymentMethods.map { it.toString() })
+                    }
+                    paymentMethodsAdapter.notifyDataSetChanged()
+                    if (showLoadingStatus) {
+                        onStatus("Loaded ${paymentMethods.size} payment method(s)")
+                    }
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    paymentMethodsAdapter.clear()
+                    paymentMethodsAdapter.add("Unable to load payment methods")
+                    paymentMethodsAdapter.notifyDataSetChanged()
+                    onPaymentFailed(error.message ?: "Unable to load payment methods")
+                }
+            }
+        }.start()
+    }
+
+    private fun selectionPanel(initialText: String): TextView {
+        return TextView(this).apply {
+            text = initialText
+            textSize = 17f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(Color.rgb(28, 38, 50))
+            setPadding(24, 18, 24, 18)
+            background = GradientDrawable().apply {
+                cornerRadius = 12f
+                setColor(Color.rgb(232, 244, 255))
+                setStroke(3, Color.rgb(46, 125, 190))
+            }
+        }
     }
 
     private fun sectionTitle(text: String): TextView {

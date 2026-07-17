@@ -3,6 +3,7 @@ const { asyncRoute } = require("../utils/asyncRoute");
 const { requireFields, parsePositiveInteger } = require("../utils/validation");
 const { env } = require("../config/env");
 const { createCustomer, readCustomer, findCustomers } = require("../services/customerService");
+const { listCustomerPaymentMethods } = require("../services/paymentService");
 
 const router = express.Router();
 
@@ -37,6 +38,14 @@ router.get(
   asyncRoute(async (req, res) => {
     const customer = await readCustomer(parseId(req.params.id, "id"));
     res.json({ customer });
+  })
+);
+
+router.get(
+  "/:id/payment-methods",
+  asyncRoute(async (req, res) => {
+    const paymentMethods = await listCustomerPaymentMethods(parseId(req.params.id, "id"));
+    res.json({ paymentMethods });
   })
 );
 

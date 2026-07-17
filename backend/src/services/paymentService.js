@@ -148,11 +148,47 @@ async function setDefaultPaymentMethodFromSetupIntent(setupIntentId) {
   };
 }
 
+async function listCustomerPaymentMethods(customerId) {
+  if (env.localStripeMockMode) {
+    return [];
+  }
+
+  const customer = await resolveCustomer(customerId);
+  const stripeCustomerId = getStripeCustomerId(customer);
+  const paymentMethods = await stripe.paymentMethods.list({
+    customer: stripeCustomerId,
+    type: "card",
+    limit: 20
+  });
+  const stripeCustomer = await stripe.customers.retrieve(stripeCustomerId);
+  const defaultPaymentMethod = stripeCustomer.invoice_settings
+    ? stripeCustomer.invoice_settings.default_payment_method
+    : null;
+  const defaultPaymentMethodId = typeof defaultPaymentMethod === "string"
+    ? defaultPaymentMethod
+    : defaultPaymentMethod && defaultPaymentMethod.id;
+
+  return paymentMethods.data.map((paymentMethod) => ({
+    id: paymentMethod.id,
+    type: paymentMethod.type,
+    card: paymentMethod.card
+      ? {
+          brand: paymentMethod.card.brand,
+          last4: paymentMethod.card.last4,
+          exp_month: paymentMethod.card.exp_month,
+          exp_year: paymentMethod.card.exp_year
+        }
+      : null,
+    isDefault: paymentMethod.id === defaultPaymentMethodId
+  }));
+}
+
 module.exports = {
   createTerminalConnectionToken,
   createCardPresentPaymentIntent,
   createReusablePaymentMethodSetupIntent,
-  setDefaultPaymentMethodFromSetupIntent
+  setDefaultPaymentMethodFromSetupIntent,
+  listCustomerPaymentMethods
 };
 
 function createMockCardPresentPaymentIntent(input) {

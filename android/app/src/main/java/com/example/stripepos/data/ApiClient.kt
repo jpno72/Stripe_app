@@ -37,6 +37,31 @@ data class MembershipPlan(
     }
 }
 
+data class PaymentMethodSummary(
+    val id: String,
+    val type: String,
+    val brand: String?,
+    val last4: String?,
+    val expMonth: Int?,
+    val expYear: Int?,
+    val isDefault: Boolean
+) {
+    override fun toString(): String {
+        val cardLabel = if (brand.isNullOrBlank() || last4.isNullOrBlank()) {
+            "$type payment method"
+        } else {
+            "${brand.replaceFirstChar { it.uppercase() }} ending in $last4"
+        }
+        val expiration = if (expMonth != null && expYear != null) {
+            " | exp ${expMonth.toString().padStart(2, '0')}/$expYear"
+        } else {
+            ""
+        }
+        val defaultLabel = if (isDefault) " | default" else ""
+        return "$cardLabel$expiration$defaultLabel"
+    }
+}
+
 data class SubscriptionSummary(
     val id: String,
     val stripeSubscriptionId: String,
@@ -106,6 +131,11 @@ class ApiClient {
 
         val json = request("POST", "/api/v1/customers", body)
         return json.getJSONObject("customer").toCustomerSummary()
+    }
+
+    fun fetchCustomerPaymentMethods(customerId: String): List<PaymentMethodSummary> {
+        val json = request("GET", "/api/v1/customers/${customerId.urlEncode()}/payment-methods")
+        return json.getJSONArray("paymentMethods").toPaymentMethodSummaries()
     }
 
     fun fetchMembershipPlans(): List<MembershipPlan> {
@@ -208,6 +238,22 @@ class ApiClient {
         }
     }
 
+    private fun JSONArray.toPaymentMethodSummaries(): List<PaymentMethodSummary> {
+        return (0 until length()).map { index ->
+            val paymentMethod = getJSONObject(index)
+            val card = paymentMethod.optJSONObject("card")
+            PaymentMethodSummary(
+                id = paymentMethod.getString("id"),
+                type = paymentMethod.optString("type", "card"),
+                brand = card?.optStringOrNull("brand"),
+                last4 = card?.optStringOrNull("last4"),
+                expMonth = card?.optIntOrNull("exp_month"),
+                expYear = card?.optIntOrNull("exp_year"),
+                isDefault = paymentMethod.optBoolean("isDefault", false)
+            )
+        }
+    }
+
     private fun JSONObject.toCustomerSummary(): CustomerSummary {
         return CustomerSummary(
             id = getString("id"),
@@ -229,6 +275,10 @@ class ApiClient {
 
     private fun JSONObject.optStringOrNull(name: String): String? {
         return if (isNull(name)) null else optString(name).takeIf { it.isNotBlank() }
+    }
+
+    private fun JSONObject.optIntOrNull(name: String): Int? {
+        return if (isNull(name) || !has(name)) null else optInt(name)
     }
 
     private fun String.urlEncode(): String {
