@@ -1,7 +1,10 @@
 const { stripe } = require("../config/stripe");
 const { env } = require("../config/env");
 const { logger } = require("../config/logger");
-const { createWebhookEvent } = require("../repositories/webhookRepository");
+const {
+  createWebhookEvent,
+  markWebhookEventProcessed
+} = require("../repositories/webhookRepository");
 const { updatePaymentFromIntent } = require("../repositories/paymentRepository");
 const { upsertInvoiceRecord } = require("../repositories/invoiceRepository");
 const { upsertCustomerRecord, getCustomerByStripeId } = require("../repositories/customerRepository");
@@ -17,7 +20,11 @@ async function processStripeEvent(event) {
     return;
   }
 
-  await createWebhookEvent(event);
+  const webhookEvent = await createWebhookEvent(event);
+  if (!webhookEvent.shouldProcess) {
+    logger.info({ stripeEventId: event.id, type: event.type }, "stripe event already processed");
+    return;
+  }
 
   switch (event.type) {
     case "payment_intent.succeeded":
@@ -62,6 +69,8 @@ async function processStripeEvent(event) {
       logger.info({ stripeEventId: event.id, type: event.type }, "stripe event stored without handler");
       break;
   }
+
+  await markWebhookEventProcessed(event.id);
 }
 
 async function saveStripeInvoice(invoice) {
