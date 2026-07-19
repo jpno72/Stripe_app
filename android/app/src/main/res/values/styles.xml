@@ -2,17 +2,19 @@
 <resources>
     <style name="AppTheme" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="android:fontFamily">sans-serif</item>
-        <item name="android:colorAccent">#5F8197</item>
+        <item name="android:colorAccent">#0066E6</item>
         <item name="android:windowBackground">#F6F8FA</item>
-        <item name="colorPrimary">#0F766E</item>
-        <item name="colorPrimaryVariant">#115E59</item>
+        <item name="colorPrimary">#0066E6</item>
+        <item name="colorPrimaryVariant">#0052B8</item>
         <item name="colorOnPrimary">#FFFFFF</item>
-        <item name="colorSecondary">#5F8197</item>
+        <item name="colorSecondary">#1D2942</item>
         <item name="android:windowLightStatusBar">true</item>
     </style>
 
     <style name="StripePosButton">
         <item name="android:background">@drawable/button_background</item>
+        <item name="android:backgroundTint">@null</item>
+        <item name="backgroundTint">@null</item>
         <item name="android:textColor">#FFFFFF</item>
         <item name="android:fontFamily">sans-serif-medium</item>
         <item name="android:textSize">15sp</item>
@@ -24,4 +26,3 @@
         <item name="android:textAllCaps">false</item>
     </style>
 </resources>
-
