@@ -36,6 +36,7 @@ class TerminalManager(
         fun onStatus(message: String)
         fun onReadersUpdated(readers: List<Reader>)
         fun onReaderConnected(reader: Reader)
+        fun onReaderDisconnected()
         fun onPaymentSucceeded(message: String)
         fun onPaymentFailed(message: String)
     }
@@ -118,6 +119,21 @@ class TerminalManager(
                 }
             }
         )
+    }
+
+    fun disconnectReader() {
+        initializeTerminal()
+        listener.onStatus("Disconnecting reader...")
+        Terminal.getInstance().disconnectReader(object : Callback {
+            override fun onSuccess() {
+                listener.onReaderDisconnected()
+                listener.onStatus("Reader disconnected")
+            }
+
+            override fun onFailure(e: TerminalException) {
+                listener.onPaymentFailed("Reader disconnect failed: ${e.errorMessage}")
+            }
+        })
     }
 
     fun collectAndProcessPayment(amount: Int, currency: String, customerId: String?) {
@@ -217,6 +233,7 @@ class TerminalManager(
     }
 
     override fun onDisconnect(reason: DisconnectReason) {
+        listener.onReaderDisconnected()
         listener.onStatus("Reader disconnected: $reason")
     }
 

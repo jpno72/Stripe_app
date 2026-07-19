@@ -38,7 +38,7 @@ async function createSubscription(input) {
         quantity: input.quantity || 1
       }
     ],
-    payment_behavior: input.paymentBehavior || "default_incomplete",
+    payment_behavior: input.paymentBehavior || "allow_incomplete",
     trial_period_days: input.trialPeriodDays,
     metadata: input.metadata || {},
     expand: ["latest_invoice.payment_intent"]
@@ -52,8 +52,34 @@ async function createSubscription(input) {
   return { subscription: record, stripeSubscription: subscription, plan };
 }
 
-function listMembershipPlans() {
-  return env.membershipPlans;
+async function listMembershipPlans() {
+  if (env.localStripeMockMode) {
+    return env.membershipPlans.map((plan) => ({
+      ...plan,
+      unitAmount: 0,
+      currency: env.defaultCurrency,
+      interval: "month"
+    }));
+  }
+
+  return Promise.all(env.membershipPlans.map(async (plan) => {
+    try {
+      const price = await stripe.prices.retrieve(plan.stripePriceId);
+      return {
+        ...plan,
+        unitAmount: price.unit_amount || 0,
+        currency: price.currency || env.defaultCurrency,
+        interval: price.recurring ? price.recurring.interval : null
+      };
+    } catch (_error) {
+      return {
+        ...plan,
+        unitAmount: 0,
+        currency: env.defaultCurrency,
+        interval: null
+      };
+    }
+  }));
 }
 
 async function readSubscription(id) {

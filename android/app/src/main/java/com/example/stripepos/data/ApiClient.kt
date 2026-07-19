@@ -30,11 +30,19 @@ data class MembershipPlan(
     val id: String,
     val name: String,
     val stripePriceId: String,
-    val description: String?
+    val description: String?,
+    val unitAmount: Int,
+    val currency: String,
+    val interval: String?
 ) {
     override fun toString(): String {
-        return if (description.isNullOrBlank()) name else "$name | $description"
+        val amount = formatMinorAmount(unitAmount, currency)
+        val cadence = interval?.let { " / $it" }.orEmpty()
+        val base = "$name | $amount$cadence"
+        return if (description.isNullOrBlank()) base else "$base | $description"
     }
+
+    fun typeLabel(): String = "Recurring"
 }
 
 data class PaymentMethodSummary(
@@ -80,6 +88,50 @@ data class DefaultPaymentMethodSummary(
     val customerId: String,
     val defaultPaymentMethodId: String
 )
+
+data class ActiveCustomerSummary(
+    val id: String,
+    val name: String?,
+    val email: String?,
+    val phone: String?
+) {
+    override fun toString(): String {
+        return listOfNotNull(name, email, phone).joinToString(" | ").ifBlank { id }
+    }
+}
+
+data class ActiveSubscriptionSummary(
+    val id: String,
+    val status: String,
+    val customerName: String?,
+    val customerEmail: String?,
+    val productName: String,
+    val unitAmount: Int,
+    val currency: String,
+    val interval: String?
+) {
+    override fun toString(): String {
+        val customer = customerName ?: customerEmail ?: "Customer"
+        val amount = formatMinorAmount(unitAmount, currency)
+        val cadence = interval?.let { " / $it" }.orEmpty()
+        return "$customer | $productName | $amount$cadence | $status"
+    }
+}
+
+data class ReportTransactionSummary(
+    val id: String,
+    val type: String,
+    val status: String,
+    val description: String,
+    val amount: Int,
+    val currency: String,
+    val created: Long?
+) {
+    override fun toString(): String {
+        val date = created?.let { formatEpochSeconds(it) } ?: "date unavailable"
+        return "$date | $type | $description | ${formatMinorAmount(amount, currency)} | $status"
+    }
+}
 
 class ApiClient {
     fun checkHealth(): Boolean {
@@ -143,6 +195,21 @@ class ApiClient {
         return json.getJSONArray("plans").toMembershipPlans()
     }
 
+    fun fetchActiveCustomers(): List<ActiveCustomerSummary> {
+        val json = request("GET", "/api/v1/reports/active-customers")
+        return json.getJSONArray("customers").toActiveCustomers()
+    }
+
+    fun fetchActiveSubscriptions(): List<ActiveSubscriptionSummary> {
+        val json = request("GET", "/api/v1/reports/active-subscriptions")
+        return json.getJSONArray("subscriptions").toActiveSubscriptions()
+    }
+
+    fun fetchRecentTransactions(): List<ReportTransactionSummary> {
+        val json = request("GET", "/api/v1/reports/recent-transactions")
+        return json.getJSONArray("transactions").toReportTransactions()
+    }
+
     fun createSubscription(customerId: String, planId: String): SubscriptionSummary {
         // Recurring billing requires the Stripe Customer to have a reusable payment method.
         // A Terminal card-present payment does not by itself save a reusable subscription payment method.
@@ -167,6 +234,32 @@ class ApiClient {
             id = setupIntent.getString("id"),
             clientSecret = setupIntent.getString("client_secret"),
             status = setupIntent.getString("status")
+        )
+    }
+
+    fun createCardPaymentIntent(
+        amount: Int,
+        currency: String,
+        customerId: String?,
+        description: String
+    ): BackendPaymentIntent {
+        val body = JSONObject()
+            .put("amount", amount)
+            .put("currency", currency)
+            .put("description", description)
+            .put("metadata", JSONObject().put("source", "android_cart_checkout"))
+
+        if (customerId != null) {
+            body.put("customerId", customerId)
+        }
+
+        val json = request("POST", "/api/v1/payment-intents/card", body)
+        val paymentIntent = json.getJSONObject("paymentIntent")
+
+        return BackendPaymentIntent(
+            id = paymentIntent.getString("id"),
+            clientSecret = paymentIntent.getString("client_secret"),
+            status = paymentIntent.optString("status")
         )
     }
 
@@ -233,7 +326,10 @@ class ApiClient {
                 id = plan.getString("id"),
                 name = plan.getString("name"),
                 stripePriceId = plan.getString("stripePriceId"),
-                description = plan.optStringOrNull("description")
+                description = plan.optStringOrNull("description"),
+                unitAmount = plan.optInt("unitAmount", 0),
+                currency = plan.optString("currency", "usd"),
+                interval = plan.optStringOrNull("interval")
             )
         }
     }
@@ -250,6 +346,49 @@ class ApiClient {
                 expMonth = card?.optIntOrNull("exp_month"),
                 expYear = card?.optIntOrNull("exp_year"),
                 isDefault = paymentMethod.optBoolean("isDefault", false)
+            )
+        }
+    }
+
+    private fun JSONArray.toActiveCustomers(): List<ActiveCustomerSummary> {
+        return (0 until length()).map { index ->
+            val customer = getJSONObject(index)
+            ActiveCustomerSummary(
+                id = customer.getString("id"),
+                name = customer.optStringOrNull("name"),
+                email = customer.optStringOrNull("email"),
+                phone = customer.optStringOrNull("phone")
+            )
+        }
+    }
+
+    private fun JSONArray.toActiveSubscriptions(): List<ActiveSubscriptionSummary> {
+        return (0 until length()).map { index ->
+            val subscription = getJSONObject(index)
+            ActiveSubscriptionSummary(
+                id = subscription.getString("id"),
+                status = subscription.getString("status"),
+                customerName = subscription.optStringOrNull("customerName"),
+                customerEmail = subscription.optStringOrNull("customerEmail"),
+                productName = subscription.optString("productName", "Subscription"),
+                unitAmount = subscription.optInt("unitAmount", 0),
+                currency = subscription.optString("currency", "usd"),
+                interval = subscription.optStringOrNull("interval")
+            )
+        }
+    }
+
+    private fun JSONArray.toReportTransactions(): List<ReportTransactionSummary> {
+        return (0 until length()).map { index ->
+            val transaction = getJSONObject(index)
+            ReportTransactionSummary(
+                id = transaction.getString("id"),
+                type = transaction.optString("type", "transaction"),
+                status = transaction.optString("status", "unknown"),
+                description = transaction.optString("description", "Transaction"),
+                amount = transaction.optInt("amount", 0),
+                currency = transaction.optString("currency", "usd"),
+                created = transaction.optLongOrNull("created")
             )
         }
     }
@@ -281,7 +420,22 @@ class ApiClient {
         return if (isNull(name) || !has(name)) null else optInt(name)
     }
 
+    private fun JSONObject.optLongOrNull(name: String): Long? {
+        return if (isNull(name) || !has(name)) null else optLong(name)
+    }
+
     private fun String.urlEncode(): String {
         return java.net.URLEncoder.encode(this, Charsets.UTF_8.name())
     }
+}
+
+fun formatMinorAmount(amount: Int, currency: String): String {
+    return "${currency.uppercase()} ${"%.2f".format(amount / 100.0)}"
+}
+
+fun formatEpochSeconds(seconds: Long): String {
+    val formatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+    return java.time.Instant.ofEpochSecond(seconds)
+        .atZone(java.time.ZoneId.systemDefault())
+        .format(formatter)
 }

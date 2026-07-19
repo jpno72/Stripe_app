@@ -2,9 +2,29 @@ const express = require("express");
 const { asyncRoute } = require("../utils/asyncRoute");
 const { requireFields, parsePositiveInteger } = require("../utils/validation");
 const { env } = require("../config/env");
-const { createCardPresentPaymentIntent } = require("../services/paymentService");
+const {
+  createCardPaymentIntent,
+  createCardPresentPaymentIntent
+} = require("../services/paymentService");
 
 const router = express.Router();
+
+router.post(
+  "/card",
+  asyncRoute(async (req, res) => {
+    requireFields(req.body, ["amount"]);
+
+    const result = await createCardPaymentIntent({
+      amount: parsePositiveInteger(req.body.amount, "amount"),
+      currency: req.body.currency,
+      customerId: req.body.customerId ? parseCustomerId(req.body.customerId) : null,
+      description: req.body.description,
+      metadata: req.body.metadata || {}
+    });
+
+    res.status(201).json(result);
+  })
+);
 
 router.post(
   "/card-present",

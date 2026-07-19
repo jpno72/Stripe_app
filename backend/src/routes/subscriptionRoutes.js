@@ -15,7 +15,7 @@ const router = express.Router();
 router.get(
   "/plans",
   asyncRoute(async (_req, res) => {
-    res.json({ plans: listMembershipPlans() });
+    res.json({ plans: await listMembershipPlans() });
   })
 );
 

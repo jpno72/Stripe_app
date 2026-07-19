@@ -72,6 +72,50 @@ async function createCardPresentPaymentIntent(input) {
   return { payment, paymentIntent: intent };
 }
 
+async function createCardPaymentIntent(input) {
+  if (env.localStripeMockMode) {
+    return createMockCardPaymentIntent(input);
+  }
+
+  let customer = null;
+
+  if (input.customerId) {
+    customer = await resolveCustomer(input.customerId);
+  }
+
+  const intent = await stripe.paymentIntents.create({
+    amount: input.amount,
+    currency: input.currency || env.defaultCurrency,
+    customer: customer ? getStripeCustomerId(customer) : undefined,
+    automatic_payment_methods: {
+      enabled: true
+    },
+    description: input.description,
+    metadata: input.metadata || {}
+  });
+
+  if (env.useStripeOnlyPersistence) {
+    return {
+      payment: toPaymentSummary(intent, customer),
+      paymentIntent: intent
+    };
+  }
+
+  const payment = await createPaymentRecord({
+    stripePaymentIntentId: intent.id,
+    customerId: customer ? customer.id : null,
+    stripeCustomerId: customer ? getStripeCustomerId(customer) : null,
+    amount: intent.amount,
+    currency: intent.currency,
+    status: intent.status,
+    captureMethod: intent.capture_method,
+    description: intent.description,
+    metadata: intent.metadata
+  });
+
+  return { payment, paymentIntent: intent };
+}
+
 async function createReusablePaymentMethodSetupIntent(input) {
   if (env.localStripeMockMode) {
     const createdAt = Date.now();
@@ -186,6 +230,7 @@ async function listCustomerPaymentMethods(customerId) {
 module.exports = {
   createTerminalConnectionToken,
   createCardPresentPaymentIntent,
+  createCardPaymentIntent,
   createReusablePaymentMethodSetupIntent,
   setDefaultPaymentMethodFromSetupIntent,
   listCustomerPaymentMethods
@@ -219,6 +264,40 @@ function createMockCardPresentPaymentIntent(input) {
       status: "requires_payment_method",
       payment_method_types: ["card_present"],
       capture_method: input.captureMethod || "automatic",
+      description: input.description || null,
+      metadata: input.metadata || {}
+    }
+  };
+}
+
+function createMockCardPaymentIntent(input) {
+  const currency = input.currency || env.defaultCurrency;
+  const createdAt = Date.now();
+  const intentId = `pi_mock_card_${createdAt}`;
+
+  return {
+    payment: {
+      id: 0,
+      stripe_payment_intent_id: intentId,
+      customer_id: input.customerId || null,
+      stripe_customer_id: null,
+      amount: input.amount,
+      amount_received: 0,
+      currency,
+      status: "requires_payment_method",
+      capture_method: "automatic",
+      latest_charge_id: null,
+      description: input.description || null,
+      metadata: input.metadata || {}
+    },
+    paymentIntent: {
+      id: intentId,
+      client_secret: `${intentId}_secret_mock_card`,
+      amount: input.amount,
+      currency,
+      status: "requires_payment_method",
+      payment_method_types: ["card"],
+      capture_method: "automatic",
       description: input.description || null,
       metadata: input.metadata || {}
     }

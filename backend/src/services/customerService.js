@@ -80,9 +80,16 @@ async function findCustomers(filters) {
       return customers.data.map(toCustomerSummary);
     }
 
-    const customers = await stripe.customers.list({ limit: 50 });
     const query = filters.q ? String(filters.q).toLowerCase() : null;
     const phone = filters.phone ? String(filters.phone).toLowerCase() : null;
+    if (query && !phone) {
+      const searchedCustomers = await searchStripeCustomers(query);
+      if (searchedCustomers.length > 0) {
+        return searchedCustomers;
+      }
+    }
+
+    const customers = await listStripeCustomersForLocalFilter();
 
     return customers.data
       .filter((customer) => {
@@ -108,4 +115,45 @@ function toCustomerSummary(customer) {
     phone: customer.phone || null,
     metadata: customer.metadata || {}
   };
+}
+
+async function searchStripeCustomers(query) {
+  const normalized = query.trim();
+  if (!normalized) {
+    return [];
+  }
+
+  const exactEmailCustomers = normalized.includes("@")
+    ? await stripe.customers.list({ email: normalized, limit: 100 })
+    : null;
+  if (exactEmailCustomers && exactEmailCustomers.data.length > 0) {
+    return exactEmailCustomers.data.map(toCustomerSummary);
+  }
+
+  const searchValue = escapeStripeSearchValue(normalized);
+  const search = await stripe.customers.search({
+    query: [
+      `name:"${searchValue}"`,
+      `email:"${searchValue}"`,
+      `phone:"${searchValue}"`
+    ].join(" OR "),
+    limit: 100
+  });
+
+  return search.data.map(toCustomerSummary);
+}
+
+async function listStripeCustomersForLocalFilter() {
+  if (typeof stripe.customers.list({ limit: 1 }).autoPagingToArray === "function") {
+    const data = await stripe.customers
+      .list({ limit: 100 })
+      .autoPagingToArray({ limit: 500 });
+    return { data };
+  }
+
+  return stripe.customers.list({ limit: 100 });
+}
+
+function escapeStripeSearchValue(value) {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
 }

@@ -11,6 +11,7 @@ const { paymentRoutes } = require("./routes/paymentRoutes");
 const { setupIntentRoutes } = require("./routes/setupIntentRoutes");
 const { customerRoutes } = require("./routes/customerRoutes");
 const { subscriptionRoutes } = require("./routes/subscriptionRoutes");
+const { reportRoutes } = require("./routes/reportRoutes");
 const { webhookRoutes } = require("./routes/webhookRoutes");
 
 function createApp() {
@@ -32,6 +33,7 @@ function createApp() {
   app.use("/api/v1/setup-intents", setupIntentRoutes);
   app.use("/api/v1/customers", customerRoutes);
   app.use("/api/v1/subscriptions", subscriptionRoutes);
+  app.use("/api/v1/reports", reportRoutes);
 
   app.use(notFound);
   app.use(errorHandler);

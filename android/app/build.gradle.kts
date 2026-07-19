@@ -2,7 +2,6 @@ import java.util.Properties
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
 }
 
 val localProperties = Properties().apply {
@@ -41,10 +40,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_1_8
     }
 
-    kotlinOptions {
-        jvmTarget = "1.8"
-    }
-
     buildFeatures {
         buildConfig = true
     }
@@ -53,7 +48,7 @@ android {
 configurations.all {
     resolutionStrategy.eachDependency {
         if (requested.group == "androidx.compose.ui" && requested.name.startsWith("ui")) {
-            useVersion("1.5.1")
+            useVersion("1.11.4")
         }
     }
 }
@@ -64,7 +59,7 @@ dependencies {
     implementation("androidx.constraintlayout:constraintlayout:2.2.0")
     implementation("com.google.android.material:material:1.12.0")
 
-    implementation("androidx.compose.ui:ui-android:1.5.1")
+    implementation("androidx.compose.ui:ui-android:1.11.4")
 
     implementation("com.stripe:stripe-android:20.35.0")
     implementation("com.stripe:stripeterminal:5.6.0")
