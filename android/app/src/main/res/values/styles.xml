@@ -12,7 +12,7 @@
     </style>
 
     <style name="StripePosButton">
-        <item name="android:background">#1D2942</item> <!--@drawable/button_background -->
+        <item name="android:background">@drawable/button_background</item>
         <item name="android:textColor">#FFFFFF</item>
         <item name="android:fontFamily">sans-serif-medium</item>
         <item name="android:textSize">15sp</item>

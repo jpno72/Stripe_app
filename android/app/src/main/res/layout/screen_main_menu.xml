@@ -60,7 +60,6 @@
                 style="@style/StripePosButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:background="#000000"
                 android:text="Take Payment"
                 android:textAllCaps="true"
                 android:textSize="20sp" />
