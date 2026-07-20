@@ -16,7 +16,7 @@ const {
 const { HttpError } = require("../errors/httpError");
 
 async function createSubscription(input) {
-  const plan = getMembershipPlan(input.planId, input.priceId);
+  const plan = await getMembershipPlan(input.planId, input.priceId);
   const customer = await resolveCustomer(input);
   if (!customer) {
     throw new HttpError(404, "Customer not found");
@@ -60,6 +60,10 @@ async function listMembershipPlans() {
       currency: env.defaultCurrency,
       interval: "month"
     }));
+  }
+
+  if (env.membershipPlans.length === 0) {
+    return listActiveStripeRecurringPrices();
   }
 
   return Promise.all(env.membershipPlans.map(async (plan) => {
@@ -213,7 +217,11 @@ async function resolveCustomer(input) {
   throw new HttpError(400, "customerId or customer is required");
 }
 
-function getMembershipPlan(planId, priceId) {
+async function getMembershipPlan(planId, priceId) {
+  if (env.membershipPlans.length === 0 && (priceId || planId)) {
+    return getStripePriceAsMembershipPlan(priceId || planId);
+  }
+
   if (env.membershipPlans.length === 0) {
     throw new HttpError(500, "No membership plans are configured");
   }
@@ -252,6 +260,61 @@ function createMockSubscription(customer, plan, metadata) {
       ]
     }
   };
+}
+
+async function listActiveStripeRecurringPrices() {
+  const prices = await stripe.prices.list({
+    active: true,
+    type: "recurring",
+    expand: ["data.product"],
+    limit: 100
+  });
+
+  return prices.data
+    .filter((price) => price.recurring)
+    .filter((price) => isActiveProduct(price.product))
+    .map(stripePriceToMembershipPlan)
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+async function getStripePriceAsMembershipPlan(priceId) {
+  try {
+    const price = await stripe.prices.retrieve(priceId, {
+      expand: ["product"]
+    });
+    if (!price.active || !price.recurring || !isActiveProduct(price.product)) {
+      throw new HttpError(400, "Stripe price is not an active recurring membership price");
+    }
+    return stripePriceToMembershipPlan(price);
+  } catch (error) {
+    if (error instanceof HttpError) {
+      throw error;
+    }
+    if (error.statusCode === 404 || error.status === 404) {
+      throw new HttpError(400, "Membership price was not found in Stripe");
+    }
+    throw error;
+  }
+}
+
+function stripePriceToMembershipPlan(price) {
+  const product = typeof price.product === "object" && price.product ? price.product : null;
+  const productName = product && product.name ? product.name : price.nickname || price.id;
+  const description = product && product.description ? product.description : price.nickname || null;
+
+  return {
+    id: price.id,
+    name: productName,
+    stripePriceId: price.id,
+    description,
+    unitAmount: price.unit_amount || 0,
+    currency: price.currency || env.defaultCurrency,
+    interval: price.recurring ? price.recurring.interval : null
+  };
+}
+
+function isActiveProduct(product) {
+  return !(typeof product === "object" && product && product.active === false);
 }
 
 function getStripeCustomerId(customer) {

@@ -135,7 +135,11 @@ data class ReportTransactionSummary(
 
 class ApiClient {
     fun checkHealth(): Boolean {
-        val json = request("GET", "/health", authenticated = false)
+        val json = try {
+            request("GET", "/health", authenticated = false)
+        } catch (_: Exception) {
+            request("GET", "/health")
+        }
         return json.optBoolean("ok", false)
     }
 
@@ -307,7 +311,7 @@ class ApiClient {
         val responseBody = stream?.bufferedReader()?.use(BufferedReader::readText).orEmpty()
 
         if (status !in 200..299) {
-            throw IllegalStateException("Backend request failed ($status): $responseBody")
+            throw IllegalStateException("Backend request failed ($status) for $path: $responseBody")
         }
 
         return if (responseBody.isBlank()) JSONObject() else JSONObject(responseBody)

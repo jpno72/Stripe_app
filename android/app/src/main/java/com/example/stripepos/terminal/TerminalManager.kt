@@ -46,16 +46,20 @@ class TerminalManager(
     private val mainHandler = Handler(Looper.getMainLooper())
 
     fun initializeTerminal() {
-        if (!Terminal.isInitialized()) {
-            Terminal.init(
-                context.applicationContext,
-                LogLevel.VERBOSE,
-                BackendConnectionTokenProvider(apiClient),
-                this,
-                null
-            )
+        try {
+            if (!Terminal.isInitialized()) {
+                Terminal.init(
+                    context.applicationContext,
+                    LogLevel.VERBOSE,
+                    BackendConnectionTokenProvider(apiClient),
+                    this,
+                    null
+                )
+            }
+            listener.onStatus("Stripe Terminal initialized")
+        } catch (error: Exception) {
+            listener.onPaymentFailed("Stripe Terminal initialization failed: ${error.message}")
         }
-        listener.onStatus("Stripe Terminal initialized")
     }
 
     fun discoverBluetoothReaders() {

@@ -516,10 +516,7 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
                     val setupIntent = apiClient.createSetupIntent(item.customer.id)
                     runOnUiThread {
                         pendingSetupIntentId = setupIntent.id
-                        paymentSheet.presentWithSetupIntent(
-                            setupIntent.clientSecret,
-                            PaymentSheet.Configuration(merchantDisplayName = "Bloom MMA")
-                        )
+                        presentSetupIntent(setupIntent.clientSecret)
                     }
                 }
             }
@@ -533,13 +530,32 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
                     )
                     runOnUiThread {
                         pendingPaymentIntentId = paymentIntent.id
-                        paymentSheet.presentWithPaymentIntent(
-                            paymentIntent.clientSecret,
-                            PaymentSheet.Configuration(merchantDisplayName = "Bloom MMA")
-                        )
+                        presentPaymentIntent(paymentIntent.clientSecret)
                     }
                 }
             }
+        }
+    }
+
+    private fun presentSetupIntent(clientSecret: String) {
+        try {
+            paymentSheet.presentWithSetupIntent(
+                clientSecret,
+                PaymentSheet.Configuration(merchantDisplayName = "Bloom MMA")
+            )
+        } catch (error: Exception) {
+            onPaymentFailed("Could not open checkout: ${error.message}")
+        }
+    }
+
+    private fun presentPaymentIntent(clientSecret: String) {
+        try {
+            paymentSheet.presentWithPaymentIntent(
+                clientSecret,
+                PaymentSheet.Configuration(merchantDisplayName = "Bloom MMA")
+            )
+        } catch (error: Exception) {
+            onPaymentFailed("Could not open checkout: ${error.message}")
         }
     }
 
@@ -742,12 +758,16 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
     override fun onPaymentSucceeded(message: String) {
         recentAppTransactions.add(AppTransaction("terminal", selectedCustomer?.toString() ?: "No customer", "Card-present payment", "succeeded"))
         onStatus(message)
-        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        runOnUiThread {
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        }
     }
 
     override fun onPaymentFailed(message: String) {
         onStatus(message)
-        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        runOnUiThread {
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun runNetworkAction(status: String, action: () -> Unit) {
@@ -847,7 +867,22 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
             textSize = 16f
             typeface = Typeface.create("sans-serif", Typeface.NORMAL)
             setTextColor(Color.rgb(28, 38, 50))
+            setHintTextColor(Color.rgb(96, 111, 128))
+            setPadding(dp(14), 0, dp(14), 0)
             setSingleLine(true)
+            minHeight = dp(52)
+            background = GradientDrawable().apply {
+                cornerRadius = dp(8).toFloat()
+                setColor(Color.WHITE)
+                setStroke(dp(1), Color.rgb(170, 184, 200))
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(56)
+            ).apply {
+                topMargin = dp(6)
+                bottomMargin = dp(8)
+            }
         }
     }
 

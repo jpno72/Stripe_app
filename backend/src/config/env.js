@@ -53,6 +53,7 @@ const env = {
   nodeEnv: process.env.NODE_ENV || "development",
   port: Number(process.env.PORT || 3000),
   appName: process.env.APP_NAME || "Internal Stripe POS Backend",
+  appBasePath: (process.env.APP_BASE_PATH || "").trim().replace(/\/+$/, ""),
   defaultCurrency: (process.env.DEFAULT_CURRENCY || "usd").toLowerCase(),
   localStripeMockMode: process.env.LOCAL_STRIPE_MOCK_MODE === "true",
   persistenceMode: (process.env.PERSISTENCE_MODE || "stripe").trim().toLowerCase(),

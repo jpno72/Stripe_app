@@ -45,21 +45,11 @@ android {
     }
 }
 
-configurations.all {
-    resolutionStrategy.eachDependency {
-        if (requested.group == "androidx.compose.ui" && requested.name.startsWith("ui")) {
-            useVersion("1.11.4")
-        }
-    }
-}
-
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.constraintlayout:constraintlayout:2.2.0")
     implementation("com.google.android.material:material:1.12.0")
-
-    implementation("androidx.compose.ui:ui-android:1.11.4")
 
     implementation("com.stripe:stripe-android:20.35.0")
     implementation("com.stripe:stripeterminal:5.6.0")
