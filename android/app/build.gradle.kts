@@ -45,6 +45,22 @@ android {
     }
 }
 
+configurations.all {
+    resolutionStrategy.eachDependency {
+        if (
+            requested.group in setOf(
+                "androidx.compose.animation",
+                "androidx.compose.foundation",
+                "androidx.compose.material",
+                "androidx.compose.runtime",
+                "androidx.compose.ui"
+            )
+        ) {
+            useVersion("1.5.1")
+        }
+    }
+}
+
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
