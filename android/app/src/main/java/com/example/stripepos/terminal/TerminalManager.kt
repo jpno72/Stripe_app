@@ -15,6 +15,7 @@ import com.stripe.stripeterminal.external.callable.ReaderCallback
 import com.stripe.stripeterminal.external.callable.TerminalListener
 import com.stripe.stripeterminal.external.models.ConnectionStatus
 import com.stripe.stripeterminal.external.models.DisconnectReason
+import com.stripe.stripeterminal.external.models.LocaleConfig
 import com.stripe.stripeterminal.external.models.PaymentIntent
 import com.stripe.stripeterminal.external.models.PaymentStatus
 import com.stripe.stripeterminal.external.models.Reader
@@ -53,7 +54,8 @@ class TerminalManager(
                     LogLevel.VERBOSE,
                     BackendConnectionTokenProvider(apiClient),
                     this,
-                    null
+                    null,
+                    LocaleConfig.CardLanguagePreferenceIfAvailable
                 )
             }
             listener.onStatus("Stripe Terminal initialized")

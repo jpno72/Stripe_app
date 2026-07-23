@@ -63,7 +63,7 @@ async function listMembershipPlans() {
   }
 
   if (env.membershipPlans.length === 0) {
-    return listActiveStripeRecurringPrices();
+    return listActiveStripePrices();
   }
 
   return Promise.all(env.membershipPlans.map(async (plan) => {
@@ -219,7 +219,11 @@ async function resolveCustomer(input) {
 
 async function getMembershipPlan(planId, priceId) {
   if (env.membershipPlans.length === 0 && (priceId || planId)) {
-    return getStripePriceAsMembershipPlan(priceId || planId);
+    const plan = await getStripePriceAsMembershipPlan(priceId || planId);
+    if (plan.type !== "recurring") {
+      throw new HttpError(400, "Selected Stripe price is not recurring and cannot create a subscription");
+    }
+    return plan;
   }
 
   if (env.membershipPlans.length === 0) {
@@ -262,19 +266,20 @@ function createMockSubscription(customer, plan, metadata) {
   };
 }
 
-async function listActiveStripeRecurringPrices() {
+async function listActiveStripePrices() {
   const prices = await stripe.prices.list({
     active: true,
-    type: "recurring",
     expand: ["data.product"],
     limit: 100
   });
 
   return prices.data
-    .filter((price) => price.recurring)
     .filter((price) => isActiveProduct(price.product))
     .map(stripePriceToMembershipPlan)
-    .sort((left, right) => left.name.localeCompare(right.name));
+    .sort((left, right) => {
+      const nameComparison = left.name.localeCompare(right.name);
+      return nameComparison || left.type.localeCompare(right.type) || left.unitAmount - right.unitAmount;
+    });
 }
 
 async function getStripePriceAsMembershipPlan(priceId) {
@@ -282,8 +287,8 @@ async function getStripePriceAsMembershipPlan(priceId) {
     const price = await stripe.prices.retrieve(priceId, {
       expand: ["product"]
     });
-    if (!price.active || !price.recurring || !isActiveProduct(price.product)) {
-      throw new HttpError(400, "Stripe price is not an active recurring membership price");
+    if (!price.active || !isActiveProduct(price.product)) {
+      throw new HttpError(400, "Stripe price is not active");
     }
     return stripePriceToMembershipPlan(price);
   } catch (error) {
@@ -309,7 +314,8 @@ function stripePriceToMembershipPlan(price) {
     description,
     unitAmount: price.unit_amount || 0,
     currency: price.currency || env.defaultCurrency,
-    interval: price.recurring ? price.recurring.interval : null
+    interval: price.recurring ? price.recurring.interval : null,
+    type: price.recurring ? "recurring" : "one_time"
   };
 }
 

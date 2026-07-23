@@ -33,16 +33,19 @@ data class MembershipPlan(
     val description: String?,
     val unitAmount: Int,
     val currency: String,
-    val interval: String?
+    val interval: String?,
+    val type: String
 ) {
     override fun toString(): String {
         val amount = formatMinorAmount(unitAmount, currency)
-        val cadence = interval?.let { " / $it" }.orEmpty()
+        val cadence = interval?.let { " / $it" } ?: " one-time"
         val base = "$name | $amount$cadence"
         return if (description.isNullOrBlank()) base else "$base | $description"
     }
 
-    fun typeLabel(): String = "Recurring"
+    fun isRecurring(): Boolean = type == "recurring" || interval != null
+
+    fun typeLabel(): String = if (isRecurring()) "Recurring" else "One-time"
 }
 
 data class PaymentMethodSummary(
@@ -333,7 +336,8 @@ class ApiClient {
                 description = plan.optStringOrNull("description"),
                 unitAmount = plan.optInt("unitAmount", 0),
                 currency = plan.optString("currency", "usd"),
-                interval = plan.optStringOrNull("interval")
+                interval = plan.optStringOrNull("interval"),
+                type = plan.optString("type", if (plan.optStringOrNull("interval") == null) "one_time" else "recurring")
             )
         }
     }

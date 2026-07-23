@@ -1,17 +1,26 @@
 package com.example.stripepos
 
 import android.Manifest
+import android.app.AlertDialog
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.print.PrintAttributes
+import android.print.PrintManager
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.FrameLayout
@@ -61,6 +70,8 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
     private var pendingCheckoutItem: CartItem? = null
     private var pendingSetupIntentId: String? = null
     private var pendingPaymentIntentId: String? = null
+    private var pendingReaderCheckoutItem: CartItem.OneTime? = null
+    private var readerPaymentDialog: AlertDialog? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -344,20 +355,33 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
         val productSearchInput = input("Search product")
         root.addView(productSearchInput)
         val productsAdapter = multilineAdapter()
-        lateinit var productsList: ListView
+        var productsList: ListView? = null
+        val productTypeOptions = listOf("All", "One-time", "Recurring")
+        var selectedProductTypeFilter = productTypeOptions.first()
+        root.addView(TextView(this).withText("Product type"))
+        val productTypeSpinner = filterDropdown(productTypeOptions) { selectedFilter ->
+            selectedProductTypeFilter = selectedFilter
+            val listView = productsList
+            if (loadedPlans.isNotEmpty() && listView != null) {
+                applyProductFilter(
+                    productsAdapter,
+                    listView,
+                    productSearchInput.text.toString(),
+                    selectedProductTypeFilter
+                )
+            }
+        }
+        root.addView(productTypeSpinner)
         fun loadProducts(filter: String = "") {
             runNetworkAction("Loading products...") {
                 loadedPlans = apiClient.fetchMembershipPlans()
-                val filtered = loadedPlans.filter {
-                    filter.isBlank() ||
-                        it.name.contains(filter, ignoreCase = true) ||
-                        (it.description ?: "").contains(filter, ignoreCase = true)
-                }
                 runOnUiThread {
-                    productsAdapter.clear()
-                    productsAdapter.addAll(filtered.map(::productLabel).ifEmpty { listOf("No products found") })
-                    productsAdapter.notifyDataSetChanged()
-                    expandListToContent(productsList)
+                    val filtered = applyProductFilter(
+                        productsAdapter,
+                        productsList ?: return@runOnUiThread,
+                        filter,
+                        selectedProductTypeFilter
+                    )
                     onStatus("Loaded ${filtered.size} product(s)")
                 }
             }
@@ -372,12 +396,7 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
             adapter = productsAdapter
             isNestedScrollingEnabled = false
             setOnItemClickListener { _, _, position, _ ->
-                val visiblePlans = loadedPlans.filter {
-                    val filter = productSearchInput.text.toString()
-                    filter.isBlank() ||
-                        it.name.contains(filter, ignoreCase = true) ||
-                        (it.description ?: "").contains(filter, ignoreCase = true)
-                }
+                val visiblePlans = filteredProducts(productSearchInput.text.toString(), selectedProductTypeFilter)
                 visiblePlans.getOrNull(position)?.let {
                     selectedPlan = it
                     bucketText.text = bucketText()
@@ -387,7 +406,7 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
         }
         root.addView(productsList, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
 
-        root.addView(menuButton("Add Membership to Cart") {
+        root.addView(menuButton("Add Selected Product to Cart") {
             val customer = selectedCustomer
             val plan = selectedPlan
             if (customer == null) {
@@ -398,7 +417,11 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
                 Toast.makeText(this, "Select a product first", Toast.LENGTH_SHORT).show()
                 return@menuButton
             }
-            cartItems.add(CartItem.Recurring(customer, plan))
+            if (plan.isRecurring()) {
+                cartItems.add(CartItem.Recurring(customer, plan))
+            } else {
+                cartItems.add(CartItem.OneTime(customer, plan.name, plan.unitAmount, plan.currency))
+            }
             recentAppTransactions.add(AppTransaction("cart", customer.toString(), plan.name, "added_to_cart"))
             selectedPlan = null
             bucketText.text = bucketText()
@@ -428,7 +451,82 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
             }
             checkoutCartItem(cartItems.first())
         })
+        addCheckoutReaderControls(root)
+        root.addView(menuButton("Pay with Card Reader") {
+            if (cartItems.isEmpty()) {
+                Toast.makeText(this, "Cart is empty", Toast.LENGTH_SHORT).show()
+                return@menuButton
+            }
+            checkoutCartItemWithReader(cartItems.first())
+        })
         setScrollableContent(root)
+    }
+
+    private fun addCheckoutReaderControls(root: LinearLayout) {
+        root.addView(sectionTitle("Card Reader"))
+        connectedReaderText = selectionPanel(connectedReaderDisplayText())
+        root.addView(connectedReaderText)
+
+        root.addView(buttonRow(
+            compactButton("Discover Bluetooth Reader") {
+                if (hasRequiredPermissions()) terminalManager.discoverBluetoothReaders() else requestRuntimePermissions()
+            },
+            compactButton("Disconnect Reader") {
+                if (connectedReaderLabel == null) {
+                    Toast.makeText(this, "No reader is connected", Toast.LENGTH_SHORT).show()
+                } else {
+                    terminalManager.disconnectReader()
+                }
+            }
+        ))
+
+        readersAdapter = multilineAdapter(discoveredReaders.map { "${it.serialNumber ?: "Unknown serial"} ${it.deviceType}" }.toMutableList())
+        readersListView = ListView(this).apply {
+            adapter = readersAdapter
+            isNestedScrollingEnabled = false
+            setOnItemClickListener { _, _, position, _ ->
+                discoveredReaders.getOrNull(position)?.let(terminalManager::connectReader)
+            }
+        }
+        root.addView(readersListView, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        readersListView?.let(::expandListToContent)
+    }
+
+    private fun checkoutCartItemWithReader(item: CartItem) {
+        if (connectedReaderLabel == null) {
+            onPaymentFailed("Connect a card reader before starting reader checkout")
+            return
+        }
+
+        if (item !is CartItem.OneTime) {
+            onPaymentFailed("Use regular Checkout for recurring memberships and subscriptions")
+            return
+        }
+
+        pendingReaderCheckoutItem = item
+        showReaderPaymentDialog(item)
+        terminalManager.collectAndProcessPayment(item.amount, item.currency, item.customer.id)
+    }
+
+    private fun showReaderPaymentDialog(item: CartItem.OneTime) {
+        readerPaymentDialog?.dismiss()
+        readerPaymentDialog = AlertDialog.Builder(this)
+            .setTitle("Card Reader Payment")
+            .setMessage(
+                "Amount: ${formatMinorAmount(item.amount, item.currency)}\n\n" +
+                    "Follow the reader prompts.\n\n" +
+                    "Accepted methods:\n" +
+                    "Tap contactless card or wallet\n" +
+                    "Insert chip card\n" +
+                    "Swipe magnetic stripe if prompted"
+            )
+            .setNegativeButton("Cancel") { dialog, _ ->
+                terminalManager.cancelActivePayment()
+                pendingReaderCheckoutItem = null
+                dialog.dismiss()
+            }
+            .create()
+        readerPaymentDialog?.show()
     }
 
     private fun showRecentTransactionsScreen() {
@@ -447,10 +545,24 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
             "Stripe only"
         )
         var stripeItems: List<ReportTransactionSummary> = emptyList()
+        var visibleDisplayItems: List<TransactionDisplayItem> = emptyList()
+        var selectedReceipt: ReceiptDetails? = null
+        val selectedReceiptText = selectionPanel("Select a transaction to resend a receipt")
         val transactionsAdapter = multilineAdapter()
         val transactionsList = ListView(this).apply {
             adapter = transactionsAdapter
             isNestedScrollingEnabled = false
+            setOnItemClickListener { _, _, position, _ ->
+                val receipt = visibleDisplayItems.getOrNull(position)?.receipt
+                if (receipt == null) {
+                    selectedReceipt = null
+                    selectedReceiptText.text = "This transaction does not have receipt details available"
+                    Toast.makeText(this@MainActivity, "No receipt available for this transaction", Toast.LENGTH_SHORT).show()
+                } else {
+                    selectedReceipt = receipt
+                    selectedReceiptText.text = "Selected Receipt\n${receiptSummary(receipt)}"
+                }
+            }
         }
 
         fun currentDisplayItems(): List<TransactionDisplayItem> {
@@ -459,27 +571,40 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
                     label = it.toString(),
                     source = "app",
                     action = it.action,
-                    result = it.result
+                    result = it.result,
+                    receipt = it.receipt
                 )
             }.plus(
                 stripeItems.map {
+                    val receipt = ReceiptDetails(
+                        customerName = null,
+                        customerEmail = null,
+                        customerPhone = null,
+                        product = it.description,
+                        amount = formatMinorAmount(it.amount, it.currency),
+                        method = it.type,
+                        status = it.status,
+                        createdAt = it.created?.let(::formatEpochSeconds) ?: "date unavailable"
+                    )
                     TransactionDisplayItem(
                         label = it.toString(),
                         source = "stripe",
                         action = it.type,
-                        result = it.status
+                        result = it.status,
+                        receipt = receipt
                     )
                 }
             )
         }
 
         fun applyFilter(filter: String) {
-            val visibleItems = currentDisplayItems()
+            visibleDisplayItems = currentDisplayItems()
                 .filter { transactionMatchesFilter(it, filter) }
-                .map { it.label }
+            selectedReceipt = null
+            selectedReceiptText.text = "Select a transaction to resend a receipt"
 
             transactionsAdapter.clear()
-            transactionsAdapter.addAll(visibleItems.ifEmpty { listOf("No matching transactions") })
+            transactionsAdapter.addAll(visibleDisplayItems.map { it.label }.ifEmpty { listOf("No matching transactions") })
             transactionsAdapter.notifyDataSetChanged()
             expandListToContent(transactionsList)
         }
@@ -497,6 +622,15 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
                     onStatus("Loaded recent transaction history")
                 }
             }
+        })
+        root.addView(selectedReceiptText)
+        root.addView(menuButton("Resend Receipt") {
+            val receipt = selectedReceipt
+            if (receipt == null) {
+                Toast.makeText(this, "Select a transaction first", Toast.LENGTH_SHORT).show()
+                return@menuButton
+            }
+            showReceiptOptionsScreen(receipt)
         })
         root.addView(transactionsList, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         applyFilter("All")
@@ -583,20 +717,22 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
                             apiClient.setDefaultPaymentMethodFromSetupIntent(setupIntentId)
                             val subscription = apiClient.createSubscription(item.customer.id, item.plan.id)
                             runOnUiThread {
+                                val receipt = receiptForCartItem(item, "Card checkout", subscription.status)
                                 cartItems.remove(item)
                                 recentAppTransactions.add(
-                                    AppTransaction("checkout", item.customer.toString(), item.plan.name, subscription.status)
+                                    AppTransaction("checkout", item.customer.toString(), item.plan.name, subscription.status, receipt = receipt)
                                 )
-                                showThankYou()
+                                showPaymentComplete(receipt)
                             }
                         }
                     }
                     is CartItem.OneTime -> {
+                        val receipt = receiptForCartItem(item, "Card checkout", "succeeded")
                         cartItems.remove(item)
                         recentAppTransactions.add(
-                            AppTransaction("checkout", item.customer.toString(), item.name, "succeeded ${paymentIntentId ?: ""}".trim())
+                            AppTransaction("checkout", item.customer.toString(), item.name, "succeeded ${paymentIntentId ?: ""}".trim(), receipt = receipt)
                         )
-                        showThankYou()
+                        showPaymentComplete(receipt)
                     }
                 }
             }
@@ -640,6 +776,247 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
         }, 2_000)
     }
 
+    private fun showPaymentComplete(receipt: ReceiptDetails? = null) {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 96, 48, 48)
+            background = borderedBackground()
+        }
+        root.addView(TextView(this).apply {
+            text = "Payment Complete"
+            textSize = 32f
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(0, 160, 0, 0)
+        })
+        if (receipt != null) {
+            root.addView(TextView(this).withText(receiptSummary(receipt)))
+            root.addView(menuButton("Receipt Options") {
+                showReceiptOptionsScreen(receipt)
+            })
+            root.addView(menuButton("Done") {
+                clearTakePaymentSelection()
+                showMainMenu()
+            })
+        }
+        setInsetContentView(root)
+        if (receipt == null) {
+            handler.postDelayed({
+                clearTakePaymentSelection()
+                showMainMenu()
+            }, 2_000)
+        }
+    }
+
+    private fun showReceiptOptionsScreen(receipt: ReceiptDetails) {
+        val root = screenRoot("Receipt Options")
+        root.addView(statusLabel("Choose receipt method"))
+        root.addView(selectionPanel(receiptSummary(receipt)))
+        root.addView(menuButton("Print Receipt") {
+            showReceiptConfirmation(receipt, ReceiptAction.Print)
+        })
+        root.addView(menuButton("Email Receipt") {
+            showEmailReceiptScreen(receipt)
+        })
+        root.addView(menuButton("Text Receipt") {
+            showTextReceiptScreen(receipt)
+        })
+        root.addView(menuButton("No Receipt") {
+            clearTakePaymentSelection()
+            showMainMenu()
+        })
+        root.addView(menuButton("Back") {
+            showPaymentComplete(receipt)
+        })
+        setScrollableContent(root)
+    }
+
+    private fun showEmailReceiptScreen(receipt: ReceiptDetails) {
+        val root = screenRoot("Email Receipt")
+        root.addView(statusLabel("Select or enter receipt email"))
+        root.addView(selectionPanel(receiptSummary(receipt)))
+        receipt.customerEmail?.takeIf { it.isNotBlank() }?.let { email ->
+            root.addView(TextView(this).withText("Email on file: $email"))
+            root.addView(menuButton("Use Email on File") {
+                showReceiptConfirmation(receipt, ReceiptAction.Email(email))
+            })
+        }
+        val emailInput = input("Enter receipt email")
+        root.addView(emailInput)
+        root.addView(menuButton("Continue") {
+            val email = emailInput.text.toString().trim()
+            if (!email.contains("@") || !email.contains(".")) {
+                Toast.makeText(this, "Enter a valid email", Toast.LENGTH_SHORT).show()
+                return@menuButton
+            }
+            showReceiptConfirmation(receipt, ReceiptAction.Email(email))
+        })
+        root.addView(menuButton("Back to Receipt Options") {
+            showReceiptOptionsScreen(receipt)
+        })
+        setScrollableContent(root)
+    }
+
+    private fun showTextReceiptScreen(receipt: ReceiptDetails) {
+        val root = screenRoot("Text Receipt")
+        root.addView(statusLabel("Enter USA mobile number"))
+        root.addView(selectionPanel(receiptSummary(receipt)))
+        val phoneInput = input("Phone number")
+        phoneInput.setText(receipt.customerPhone.orEmpty())
+        root.addView(phoneInput)
+        root.addView(menuButton("Continue") {
+            val phone = normalizeUsPhone(phoneInput.text.toString())
+            if (phone == null) {
+                Toast.makeText(this, "Enter a valid USA phone number", Toast.LENGTH_SHORT).show()
+                return@menuButton
+            }
+            showReceiptConfirmation(receipt, ReceiptAction.Text(phone))
+        })
+        root.addView(menuButton("Back to Receipt Options") {
+            showReceiptOptionsScreen(receipt)
+        })
+        setScrollableContent(root)
+    }
+
+    private fun showReceiptConfirmation(receipt: ReceiptDetails, action: ReceiptAction) {
+        val root = screenRoot("Confirm Receipt")
+        root.addView(statusLabel("Review before sending"))
+        root.addView(selectionPanel("${receiptSummary(receipt)}\n\n${receiptActionSummary(action)}"))
+        root.addView(menuButton("Confirm") {
+            performReceiptAction(receipt, action)
+        })
+        root.addView(menuButton("Change Receipt Method") {
+            showReceiptOptionsScreen(receipt)
+        })
+        setScrollableContent(root)
+    }
+
+    private fun performReceiptAction(receipt: ReceiptDetails, action: ReceiptAction) {
+        when (action) {
+            is ReceiptAction.Print -> printReceipt(receipt)
+            is ReceiptAction.Email -> emailReceipt(receipt, action.email)
+            is ReceiptAction.Text -> textReceipt(receipt, action.phone)
+        }
+    }
+
+    private fun emailReceipt(receipt: ReceiptDetails, email: String) {
+        val intent = Intent(Intent.ACTION_SENDTO).apply {
+            data = Uri.parse("mailto:")
+            putExtra(Intent.EXTRA_EMAIL, arrayOf(email))
+            putExtra(Intent.EXTRA_SUBJECT, "Bloom MMA receipt")
+            putExtra(Intent.EXTRA_TEXT, receiptBody(receipt))
+        }
+        try {
+            startActivity(intent)
+            onStatus("Email receipt opened")
+        } catch (_: ActivityNotFoundException) {
+            onPaymentFailed("No email app is available on this device")
+        }
+    }
+
+    private fun textReceipt(receipt: ReceiptDetails, phone: String) {
+        val intent = Intent(Intent.ACTION_SENDTO).apply {
+            data = Uri.parse("smsto:$phone")
+            putExtra("sms_body", receiptBody(receipt))
+        }
+        try {
+            startActivity(intent)
+            onStatus("Text receipt opened")
+        } catch (_: ActivityNotFoundException) {
+            onPaymentFailed("No text messaging app is available on this device")
+        }
+    }
+
+    private fun printReceipt(receipt: ReceiptDetails) {
+        val webView = WebView(this)
+        webView.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                val printManager = getSystemService(Context.PRINT_SERVICE) as PrintManager
+                printManager.print(
+                    "Bloom MMA Receipt",
+                    webView.createPrintDocumentAdapter("Bloom MMA Receipt"),
+                    PrintAttributes.Builder().build()
+                )
+                onStatus("Choose a printer")
+            }
+        }
+        webView.loadDataWithBaseURL(null, receiptHtml(receipt), "text/html", "UTF-8", null)
+    }
+
+    private fun receiptForCartItem(item: CartItem, method: String, status: String): ReceiptDetails {
+        return when (item) {
+            is CartItem.Recurring -> ReceiptDetails(
+                customerName = item.customer.name,
+                customerEmail = item.customer.email,
+                customerPhone = item.customer.phone,
+                product = item.plan.name,
+                amount = formatMinorAmount(item.plan.unitAmount, item.plan.currency),
+                method = method,
+                status = status
+            )
+            is CartItem.OneTime -> ReceiptDetails(
+                customerName = item.customer.name,
+                customerEmail = item.customer.email,
+                customerPhone = item.customer.phone,
+                product = item.name,
+                amount = formatMinorAmount(item.amount, item.currency),
+                method = method,
+                status = status
+            )
+        }
+    }
+
+    private fun receiptSummary(receipt: ReceiptDetails): String {
+        return listOf(
+            "Customer: ${receipt.customerName ?: receipt.customerEmail ?: "Customer"}",
+            "Product: ${receipt.product}",
+            "Amount: ${receipt.amount}",
+            "Method: ${receipt.method}",
+            "Status: ${receipt.status}",
+            "Date: ${receipt.createdAt}"
+        ).joinToString("\n")
+    }
+
+    private fun receiptBody(receipt: ReceiptDetails): String {
+        return "Bloom MMA Receipt\n\n${receiptSummary(receipt)}\n\nThank you."
+    }
+
+    private fun receiptHtml(receipt: ReceiptDetails): String {
+        return """
+            <html>
+            <body style="font-family: sans-serif; padding: 24px;">
+                <h1>Bloom MMA Receipt</h1>
+                <pre style="font-size: 16px;">${escapeHtml(receiptSummary(receipt))}</pre>
+                <p>Thank you.</p>
+            </body>
+            </html>
+        """.trimIndent()
+    }
+
+    private fun receiptActionSummary(action: ReceiptAction): String {
+        return when (action) {
+            is ReceiptAction.Print -> "Action: Print receipt\nPrinter: Select in Android print window"
+            is ReceiptAction.Email -> "Action: Email receipt\nTo: ${action.email}"
+            is ReceiptAction.Text -> "Action: Text receipt\nTo: ${action.phone}"
+        }
+    }
+
+    private fun normalizeUsPhone(value: String): String? {
+        val digits = value.filter(Char::isDigit)
+        val national = when {
+            digits.length == 10 -> digits
+            digits.length == 11 && digits.startsWith("1") -> digits.drop(1)
+            else -> return null
+        }
+        return "+1$national"
+    }
+
+    private fun escapeHtml(value: String): String {
+        return value
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+    }
+
     private fun bucketText(): String {
         val customer = selectedCustomer?.toString() ?: "No customer selected"
         val plan = selectedPlan
@@ -648,13 +1025,44 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
         } else {
             val amount = formatMinorAmount(plan.unitAmount, plan.currency)
             val interval = plan.interval ?: "one time"
-            "${plan.name}\nType: recurring\nInterval: $interval\nPaid today: $amount"
+            "${plan.name}\nType: ${plan.typeLabel()}\nInterval: $interval\nPaid today: $amount"
         }
         return "Current Order\nCustomer: $customer\nProduct: $product"
     }
 
     private fun productLabel(plan: MembershipPlan): String {
-        return "${plan.name} | recurring | ${formatMinorAmount(plan.unitAmount, plan.currency)}${plan.interval?.let { " / $it" }.orEmpty()}"
+        return "${plan.name} | ${plan.typeLabel()} | ${formatMinorAmount(plan.unitAmount, plan.currency)}${plan.interval?.let { " / $it" }.orEmpty()}"
+    }
+
+    private fun filteredProducts(searchText: String, typeFilter: String): List<MembershipPlan> {
+        val normalizedSearch = searchText.trim()
+        return loadedPlans.filter { plan ->
+            val matchesText = normalizedSearch.isBlank() ||
+                plan.name.contains(normalizedSearch, ignoreCase = true) ||
+                (plan.description ?: "").contains(normalizedSearch, ignoreCase = true)
+
+            val matchesType = when (typeFilter) {
+                "One-time" -> !plan.isRecurring()
+                "Recurring" -> plan.isRecurring()
+                else -> true
+            }
+
+            matchesText && matchesType
+        }
+    }
+
+    private fun applyProductFilter(
+        adapter: ArrayAdapter<String>,
+        listView: ListView,
+        searchText: String,
+        typeFilter: String
+    ): List<MembershipPlan> {
+        val filtered = filteredProducts(searchText, typeFilter)
+        adapter.clear()
+        adapter.addAll(filtered.map(::productLabel).ifEmpty { listOf("No products found") })
+        adapter.notifyDataSetChanged()
+        expandListToContent(listView)
+        return filtered
     }
 
     private fun cartLabel(item: CartItem): String {
@@ -756,16 +1164,50 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
     }
 
     override fun onPaymentSucceeded(message: String) {
-        recentAppTransactions.add(AppTransaction("terminal", selectedCustomer?.toString() ?: "No customer", "Card-present payment", "succeeded"))
         onStatus(message)
         runOnUiThread {
+            val readerItem = pendingReaderCheckoutItem
+            if (readerItem != null) {
+                pendingReaderCheckoutItem = null
+                readerPaymentDialog?.dismiss()
+                readerPaymentDialog = null
+                cartItems.remove(readerItem)
+                val receipt = receiptForCartItem(readerItem, "Card reader", "succeeded")
+                recentAppTransactions.add(
+                    AppTransaction("terminal", readerItem.customer.toString(), readerItem.name, "succeeded", receipt = receipt)
+                )
+                showTransactionSuccessfulDialog(receipt)
+                return@runOnUiThread
+            }
+
+            recentAppTransactions.add(AppTransaction("terminal", selectedCustomer?.toString() ?: "No customer", "Card-present payment", "succeeded"))
             Toast.makeText(this, message, Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun showTransactionSuccessfulDialog(receipt: ReceiptDetails) {
+        AlertDialog.Builder(this)
+            .setTitle("Transaction Successful")
+            .setMessage("Payment complete.")
+            .setCancelable(false)
+            .setPositiveButton("OK") { dialog, _ ->
+                dialog.dismiss()
+                showPaymentComplete(receipt)
+            }
+            .show()
     }
 
     override fun onPaymentFailed(message: String) {
         onStatus(message)
         runOnUiThread {
+            if (pendingReaderCheckoutItem != null) {
+                recentAppTransactions.add(
+                    AppTransaction("terminal", pendingReaderCheckoutItem?.customer?.toString() ?: "No customer", pendingReaderCheckoutItem?.name ?: "Card-present payment", "failed")
+                )
+                pendingReaderCheckoutItem = null
+                readerPaymentDialog?.dismiss()
+                readerPaymentDialog = null
+            }
             Toast.makeText(this, message, Toast.LENGTH_LONG).show()
         }
     }
@@ -1069,12 +1511,30 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
         ) : CartItem()
     }
 
+    data class ReceiptDetails(
+        val customerName: String?,
+        val customerEmail: String?,
+        val customerPhone: String?,
+        val product: String,
+        val amount: String,
+        val method: String,
+        val status: String,
+        val createdAt: String = formatEpochSeconds(System.currentTimeMillis() / 1000)
+    )
+
+    sealed class ReceiptAction {
+        data object Print : ReceiptAction()
+        data class Email(val email: String) : ReceiptAction()
+        data class Text(val phone: String) : ReceiptAction()
+    }
+
     data class AppTransaction(
         val action: String,
         val customer: String,
         val product: String,
         val result: String,
-        val createdAt: String = formatEpochSeconds(System.currentTimeMillis() / 1000)
+        val createdAt: String = formatEpochSeconds(System.currentTimeMillis() / 1000),
+        val receipt: ReceiptDetails? = null
     ) {
         override fun toString(): String {
             return "$createdAt | $action | $customer | $product | $result"
@@ -1085,7 +1545,8 @@ class MainActivity : AppCompatActivity(), TerminalManager.UiListener {
         val label: String,
         val source: String,
         val action: String,
-        val result: String
+        val result: String,
+        val receipt: ReceiptDetails? = null
     )
 
     companion object {
