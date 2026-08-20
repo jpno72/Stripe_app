@@ -1,128 +1,260 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#F6F6F4"
+    android:background="#F4F7FA"
+    android:orientation="vertical"
     android:paddingStart="7dp"
     android:paddingTop="8dp"
     android:paddingEnd="7dp"
     android:paddingBottom="8dp">
 
-   <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="@drawable/screen_border"
-        android:orientation="vertical"
-        android:paddingStart="18dp"
-        android:paddingTop="42dp"
-        android:paddingEnd="18dp"
-        android:paddingBottom="18dp">
-
-    <ScrollView
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:fillViewport="true"
-        android:paddingBottom="8dp">
-        
+        android:background="@drawable/screen_border"
+        android:baselineAligned="false"
+        android:orientation="vertical"
+        android:paddingStart="10dp"
+        android:paddingTop="18dp"
+        android:paddingEnd="10dp"
+        android:paddingBottom="10dp">
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="813dp"
+            android:layout_weight="1"
+            android:fillViewport="true"
+            android:paddingBottom="8dp">
+
+            <LinearLayout
+                android:id="@+id/mainMenuContent"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:orientation="vertical"
+                android:paddingStart="18dp"
+                android:paddingTop="18dp"
+                android:paddingEnd="18dp"
+                android:paddingBottom="18dp">
+
+                <TextView
+                    android:id="@+id/mainMenuTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:lineSpacingExtra="2dp"
+                    android:maxLines="2"
+                    android:paddingBottom="4dp"
+                    android:text="Bloom MMA Payments"
+                    android:textAlignment="center"
+                    android:textAllCaps="false"
+                    android:textColor="#182235"
+                    android:textSize="34sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/mainMenuSubtitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="22dp"
+                    android:fontFamily="sans-serif"
+                    android:gravity="center"
+                    android:text="Point of sale and reporting"
+                    android:textColor="#617084"
+                    android:textSize="15sp" />
+
+                <LinearLayout
+                    android:id="@+id/mainPaymentShortcutRow"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="14dp"
+                    android:baselineAligned="false"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/singlePaymentShortcutButton"
+                        style="@style/StripePosButton"
+                        android:layout_width="0dp"
+                        android:layout_height="72dp"
+                        android:layout_marginEnd="6dp"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:maxLines="2"
+                        android:minHeight="72dp"
+                        android:text="Single Payment"
+                        android:textAllCaps="false"
+                        android:textSize="16sp"
+                        android:visibility="visible" />
+
+                    <Button
+                        android:id="@+id/productPaymentShortcutButton"
+                        style="@style/StripePosButton"
+                        android:layout_width="0dp"
+                        android:layout_height="72dp"
+                        android:layout_marginStart="6dp"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:maxLines="2"
+                        android:minHeight="72dp"
+                        android:text="Stripe"
+                        android:textAllCaps="false"
+                        android:textSize="16sp"
+                        android:visibility="visible" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/mainUtilityButtonRow"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="20dp"
+                    android:baselineAligned="false"
+                    android:orientation="horizontal">
+
+                    <Space
+                        android:layout_width="0dp"
+                        android:layout_height="72dp"
+                        android:layout_marginStart="6dp"
+                        android:layout_weight="1" />
+
+                    <Button
+                        android:id="@+id/cartButton"
+                        style="@style/StripePosButton"
+                        android:layout_width="0dp"
+                        android:layout_height="72dp"
+                        android:layout_marginEnd="6dp"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:maxLines="2"
+                        android:minHeight="72dp"
+                        android:text="Cart (0)"
+                        android:textAllCaps="false"
+                        android:textSize="16sp"
+                        android:visibility="visible" />
+
+                    <Space
+                        android:layout_width="0dp"
+                        android:layout_height="72dp"
+                        android:layout_marginStart="6dp"
+                        android:layout_weight="1" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/mainReportsTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:text="Reports"
+                    android:textAlignment="textStart"
+                    android:textAllCaps="false"
+                    android:textColor="#182235"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/mainReportsSubtitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"
+                    android:fontFamily="sans-serif"
+                    android:gravity="left"
+                    android:text="Customer, subscription, and app activity"
+                    android:textColor="#617084"
+                    android:textSize="13sp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="53dp"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/recentAppTransactionsButton"
+                        style="@style/StripePosButton"
+                        android:layout_width="109dp"
+                        android:layout_height="52dp"
+                        android:layout_gravity="left"
+                        android:layout_marginTop="6dp"
+                        android:gravity="center"
+                        android:maxLines="2"
+                        android:minHeight="52dp"
+                        android:text="Recent Transactions"
+                        android:textAllCaps="false"
+                        android:textSize="11sp"
+                        android:visibility="visible" />
+
+                    <Space
+                        android:layout_width="2dp"
+                        android:layout_height="52dp"
+                        android:layout_weight="1" />
+
+                    <Button
+                        android:id="@+id/showActiveSubscriptionsButton"
+                        style="@style/StripePosButton"
+                        android:layout_width="109dp"
+                        android:layout_height="52dp"
+                        android:layout_gravity="fill_vertical"
+                        android:layout_marginTop="6dp"
+                        android:gravity="center"
+                        android:maxLines="2"
+                        android:minHeight="52dp"
+                        android:text="Active Subscriptions"
+                        android:textAllCaps="false"
+                        android:textSize="11sp"
+                        android:visibility="visible" />
+
+                    <Space
+                        android:layout_width="wrap_content"
+                        android:layout_height="51dp"
+                        android:layout_weight="1" />
+
+                    <Button
+                        android:id="@+id/showActiveCustomersButton"
+                        style="@style/StripePosButton"
+                        android:layout_width="109dp"
+                        android:layout_height="52dp"
+                        android:layout_gravity="right"
+                        android:layout_marginTop="4dp"
+                        android:gravity="center"
+                        android:maxLines="2"
+                        android:minHeight="52dp"
+                        android:text="Active Customers"
+                        android:textAllCaps="false"
+                        android:textSize="11sp"
+                        android:visibility="visible" />
+                </LinearLayout>
+
+            </LinearLayout>
+        </ScrollView>
+
         <LinearLayout
-            android:id="@+id/mainMenuContent"
+            android:id="@+id/mainStatusRow"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="32dp">
-
-            <TextView
-                android:id="@+id/mainMenuTitle"
-                android:layout_width="wrap_content"
-                android:layout_height="151dp"
-                android:fontFamily="sans-serif-black"
-                android:paddingBottom="20dp"
-                android:text="Stripe Payments"
-                android:textAlignment="textStart"
-                android:textAllCaps="false"
-                android:textColor="#000000"
-                android:textSize="50sp"
-                android:textStyle="bold"
-                android:typeface="serif" />
-
-            <Button
-                android:id="@+id/takePaymentButton"
-                style="@style/StripePosButton"
-                android:layout_width="230dp"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center_horizontal"
-                android:text="Take Payment"
-                android:textAllCaps="true"
-                android:textSize="20sp"
-                android:visibility="visible" />
-
-            <Button
-                android:id="@+id/cartButton"
-                style="@style/StripePosButton"
-                android:layout_width="230dp"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center_horizontal"
-                android:text="Cart (0)"
-                android:textAllCaps="true"
-                android:textSize="20sp"
-                android:visibility="visible" />
-
-            <Button
-                android:id="@+id/reportingButton"
-                style="@style/StripePosButton"
-                android:layout_width="230dp"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center_horizontal"
-                android:text="Reporting"
-                android:textAllCaps="true"
-                android:textSize="20sp"
-                android:visibility="visible" />
-
-            <Button
-                android:id="@+id/recentTransactionsButton"
-                style="@style/StripePosButton"
-                android:layout_width="230dp"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center_horizontal"
-                android:text="Recent App Transactions"
-                android:textAllCaps="true"
-                android:textSize="20sp"
-                android:visibility="visible" />
-
-            <Button
-                android:id="@+id/testingConfigurationButton"
-                style="@style/StripePosButton"
-                android:layout_width="230dp"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center_horizontal"
-                android:text="Testing and Configuration"
-                android:textAllCaps="true"
-                android:textSize="20sp"
-                android:visibility="visible" />
-
-
-
-        </LinearLayout>
-    </ScrollView>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_marginBottom="6dp"
+            android:background="@drawable/status_pill"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingStart="6dp"
+            android:paddingStart="12dp"
+            android:paddingTop="6dp"
             android:paddingEnd="12dp"
-            android:paddingBottom="28dp">
+            android:paddingBottom="6dp">
 
             <TextView
                 android:id="@+id/mainBackendText"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="35dp"
+                android:layout_gravity="bottom"
                 android:layout_weight="1"
-                android:textColor="#555555"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="#617084"
                 android:textSize="12sp"
                 tools:text="Backend: http://10.0.2.2:3000" />
 
@@ -134,10 +266,29 @@
                 android:ellipsize="end"
                 android:gravity="end"
                 android:maxLines="1"
-                android:text="Ready"
-                android:textColor="#000000"
-                android:textSize="12sp" />
+                android:text=""
+                android:textColor="#243247"
+                android:textSize="12sp"
+                android:visibility="gone" />
+
+            <Button
+                android:id="@+id/ConfigurationButton"
+                style="@style/StripePosButton"
+                android:layout_width="135dp"
+                android:layout_height="53dp"
+                android:layout_gravity="top"
+                android:layout_marginStart="18dp"
+                android:layout_marginEnd="18dp"
+                android:layout_marginBottom="18dp"
+                android:backgroundTint="#4B6B88"
+                android:gravity="center"
+                android:maxLines="2"
+                android:minHeight="72dp"
+                android:text="Configuration"
+                android:textAllCaps="false"
+                android:textSize="10sp"
+                android:visibility="visible" />
         </LinearLayout>
 
     </LinearLayout>
-</FrameLayout>
+</LinearLayout>
