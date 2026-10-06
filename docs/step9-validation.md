@@ -1,0 +1,31 @@
+# Step 9 implementation validation
+
+Result: **PASS**. Used the existing disposable `bma_schema_test_installer_7bdd63ff` database. No database rebuild, migration replay, production imports or full regression suite was performed. Prior Step 5 age/financial-grain and shared-payer results remain applicable.
+
+| Check | Result | Evidence |
+|---|---|---|
+| KPI agreement and coverage | PASS | `tests/demographics.php`: mean and known-age count agree with `vw_member_demographics`; active scope agrees with `vw_active_members`. Existing synthetic-member snapshot has four members, one known age (16), three unknown ages, one known city and postal code. The browser shows mean/median 16.0, one known youth, zero known adults and one represented city/postal code with coverage counts. These are fixture values, not production statistics. |
+| Filters and grains | PASS | Program filter uses current explicit assignments. All age/youth/city/ZIP chart counts partition the member scope once. Geographic groups sum to scoped members and percentages include unknown locations. Cohort dates exclude unknown starts without inventing dates. |
+| Focused checks | PASS | 24 checks cover view agreement, chart denominators, weighted odd/even medians, 7/8/17/18 boundaries, city trimming, leading-zero postal codes, invalid config/date inputs, program/cohort/activity filters (including inactive/unknown partitioning), missing/future DOB and privacy-safe aggregate output. Temporary changes to four existing member records and one existing payer relationship were rolled back; no test records or altered demographics were persisted. |
+| Geographic revenue | PASS | Shared payer groups remain unavailable. A temporarily exclusive existing payer/member fixture produces exactly the payer view's USD gross once; the original relationship is restored by rollback. Currencies are not mixed. |
+| Desktop browser | PASS | 1440 px: six KPIs, four charts, two geography groups, no page overflow or browser errors. Applying active/program/13-17/city/ZIP/cohort-from/cohort-through filters together yields one member and 100% geographic share. Table search for Bloomsburg returns one row at the original 25% scope share. |
+| Missing/empty states | PASS | Unknown-age scope and a future empty cohort show Unavailable age KPIs, zero visible charts and four visible chart-empty messages. Empty table text is clear. The first browser script counted non-hidden canvas elements even when their parents were hidden; a focused visibility check confirmed the correct empty-state behavior. |
+| Mobile browser | PASS | 390 px: no document overflow, stacked cards and filters, charts fit and the table scrolls within its container. Navigation opens and closes using the existing shell. Desktop and mobile screenshots inspected. |
+| Access and privacy | PASS | Unauthenticated page and geographic API return 403. Current page/API invoke existing admin authorization. Authorized Dashboard, Membership, Revenue and Imports requests still return 200. New PHP files and changed layout/router files pass syntax checks; the new JavaScript passes node --check, and the new production files contain no credential patterns. Browser output contains no exact birth dates or medical waiver field names. Aggregate result keys contain no member/person IDs, names, DOB or waiver free text. Goals and considerations remain ignored by the import contract. |
+
+Blockers: none. Goals/interests remain unavailable because their source field is excluded; ambiguous waiver data is not assigned to members. Known demographics are derived only from normalized member fields. Current data limitations and KPI/filter/revenue definitions are documented in [demographics-dashboard.md](demographics-dashboard.md). Step 10 was not started.
+
+## Final validation review - 2026-10-04
+
+**PASS.** Reviewed current KPI/query classes, protected page/API entry points, shared navigation, and the recorded implementation checks. Application code remains unchanged since those successful checks. The existing 24 focused checks and desktop/mobile browser evidence cover all requested items; no repeat runs, database rebuild or new synthetic scenarios were needed.
+
+| Requested check | Result | Evidence |
+|---|---|---|
+| Representative KPIs vs reporting views | PASS, reused | Known-age mean/count agree with vw_member_demographics; active scope agrees with vw_active_members. Browser mean/median and known youth/adult/location counts agree with the existing fixture snapshot. Values are synthetic test results, not production totals. |
+| Principal filters and consistency | PASS, reused | Seven filters applied together in the browser. SQL checks cover active/inactive/unknown partitioning, current explicit program links, age brackets, city/ZIP and factual member cohort dates. Cards, chart distributions and geographic rows share the same scope. Table search retains the full-scope percentage denominator. |
+| Empty / missing / unavailable | PASS, reused | Unknown ages and empty cohorts render unavailable KPIs and chart-empty messages. Missing locations remain explicit. Goals are unavailable under the approved IGNORE mapping. No guessed member dates or payer demographics are substituted. |
+| Desktop and mobile | PASS, reused | Recorded 1440-px desktop and 390-px mobile checks and inspected screenshots. Filters, charts, table search, contained scrolling and mobile navigation passed with no page errors or document overflow. |
+| Access and shared components | PASS | Existing page/API 403 checks and Dashboard/Membership/Revenue/Imports 200 checks remain applicable. Current entry points still authorize before queries; the route targets the protected page and uses shared layout/navigation. |
+| Demographic integrity and privacy | PASS | One subject per member, no join multiplication, leading-zero ZIP preservation, validated bracket boundaries and weighted median. Geographic revenue remains unavailable for shared/unknown/mixed attribution; exclusive gross agrees with payer totals once. Aggregate output excludes birth dates, individual identities and medical/free-form waiver fields. |
+
+**Blockers: none.** Coverage limitations remain visible and documented. This final review changed documentation only. Step 10 has not started.

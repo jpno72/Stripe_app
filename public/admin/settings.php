@@ -1,0 +1,3 @@
+<?php
+declare(strict_types=1);
+require_once __DIR__.'/_common.php';$config=adminConfig('admin');requireDashboardAccess('settings');if(($_SERVER['REQUEST_METHOD']??'GET')!=='GET'){http_response_code(405);header('Allow: GET');exit('Read-only page.');}uiLayoutStart('Settings','settings','Protected application configuration.');uiCardStart('Deployment settings','Secrets are configured outside the public web root and are never displayed here.');echo '<p>Use the private configuration file or server environment to change deployment settings. Stripe synchronization controls will be added in Step 12.</p>';echo '<a class="btn btn-primary" href="/admin/dashboard-access.php">Dashboard access</a>';uiCardEnd();uiLayoutEnd();

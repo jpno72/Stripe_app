@@ -1,0 +1,19 @@
+# Step 5 final validation
+
+> Historical stage evidence. Step 11 application login and roles supersede temporary cPanel authorization; see security.md and deployment.md.
+
+Validated on 2026-10-04 against the existing disposable MariaDB 10.4.27 database containing the four supplied shelled imports and earlier test fixtures. No database was rebuilt and no import or dashboard work was performed. The temporary SELECT-only database account used for view checks was removed afterward.
+
+| Check | Result | New evidence or reused result |
+|---|---|---|
+| Application-level SELECT access | PASS | A temporary account granted only `SELECT` on the test database executed `SELECT * ... LIMIT 1` on all 14 views. Every view returned its expected named columns without an error. |
+| Unknown source facts | PASS | The imported subscription and item have `NULL` currency and monthly rate; the subscription's explicit start is `NULL`. Both imported charges have `NULL` Stripe fees and net after recorded costs, and neither has a direct program/subscription assignment. Three existing members with unknown `member_since` have `NULL` 3-, 6-, and 12-month retention results. No missing fact was reported as a factual zero or fabricated date. |
+| Columns, units, and date types | PASS | View metadata and SQL agree with [reporting-definitions.md](reporting-definitions.md): member and transaction dates are `DATE`/`DATETIME`; source money is `BIGINT` minor units; `SUM()` totals are integer-valued `DECIMAL` minor units; monthly equivalents are `DECIMAL` minor units. The definitions document now states the aggregate type explicitly. |
+| KPI arithmetic and row grain | PASS, reused | The 10 Step 5 reporting fixture checks passed: multi-item and interval MRR, one row per charge, failed-charge exclusion, direct program attribution, shared-payer and shared-subscription non-duplication, active status, retention, and derived age. The prior populated-data check also found one view row per charge and no repeated revenue within a single period grain. These tests were not rerun. |
+| Aggregate data exposure | PASS | Period/month revenue views expose only dates, currency, counts, and totals. Program revenue also exposes a source product label and current subscription status; it has no person identifiers or waiver fields. `vw_import_health` includes an uploaded filename and belongs to administrators. No reporting view selects medical or other ignored waiver fields. |
+| Protected individual-level views | PASS, access requirement identified | Member summary, active members, demographics, retention, member financial summary, payer/member scope, payer financial summary, transaction summary, subscription summary, and item rates expose person, household, financial, or external-ID detail. Restrict these views and underlying tables to authorized reporting/admin accounts and escape source labels in the UI. SELECT access to all tables/views is sufficient for local execution, but is broader than a public dashboard role. |
+| MariaDB/cPanel portability | PASS | All 14 installed views report `SQL SECURITY INVOKER`; their definitions have no hard-coded deployer or database-user name. They ran on MariaDB 10.4.27 under a SELECT-only account. Installation requires `CREATE VIEW`; querying requires `SELECT` on referenced views and base tables. Neither requires a daemon, root access, or a VPS on cPanel. |
+
+**Remaining limitations:** The local privilege test does not prove that a future cPanel account has been granted the same privileges; verify the host's grants at deployment. Actual imported data cannot support factual member tenure, member-level subscription attribution, MRR, Stripe-fee net, or program revenue yet. Keep those values unknown until approved source data is available. Product labels and import filenames are source-provided strings and should be shown only in authorized interfaces with output escaping.
+
+**Blockers for Step 6:** None.

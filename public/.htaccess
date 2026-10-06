@@ -1,0 +1,20 @@
+Options -Indexes
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteRule ^demographics/?$ demographics.php [L,QSA]
+RewriteRule ^membership/?$ membership.php [L,QSA]
+RewriteRule ^revenue/?$ revenue.php [L,QSA]
+RewriteRule ^members/([1-9][0-9]*)/?$ member.php?id=$1 [L,QSA]
+RewriteRule ^members/(BMA-[0-9]+)/?$ member.php?bma=$1 [L,QSA]
+</IfModule>
+# Only public/ is a document root. PHP enforces HTTPS, application login and roles.
+# cPanel Directory Privacy may be retained as an additional outer barrier.
+
+<FilesMatch "(?i)^(?:\.|config\.php|composer\.(?:json|lock))">
+Require all denied
+</FilesMatch>
+<IfModule mod_headers.c>
+Header always set X-Content-Type-Options "nosniff"
+Header always set X-Frame-Options "DENY"
+Header always set Referrer-Policy "no-referrer"
+</IfModule>

@@ -1,0 +1,6 @@
+Options -Indexes
+# Enable cPanel Directory Privacy for this directory. Its Basic Auth configuration
+# supplies REMOTE_USER; the PHP page additionally checks the configured allowlist.
+<IfModule mod_authz_core.c>
+    Require valid-user
+</IfModule>
