@@ -1,30 +1,20 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/Paths.php';
 
 /** Environment wins, including intentional empty values. Never read a web-root config. */
 function bmaConfig(?string $configPath = null): array
 {
     $config = [];
-    $path = $configPath ?? (getenv('BMA_CONFIG_FILE') ?: null);
+    $path = $configPath ?? Paths::deploymentValue('BMA_CONFIG_FILE')
+        ?? (defined('BMA_CONFIG_PATH') ? BMA_CONFIG_PATH : null);
     if ($path !== null) {
         $real = realpath($path);
         if ($real === false || !is_file($real) || !is_readable($real)) {
             throw new RuntimeException('The external configuration file is not readable.');
         }
-        $roots = [dirname(__DIR__) . '/public'];
-        if (!empty($_SERVER['DOCUMENT_ROOT'])) {
-            $roots[] = $_SERVER['DOCUMENT_ROOT'];
-        }
-        foreach ($roots as $root) {
-            $resolved = realpath($root);
-            if ($resolved !== false) {
-                $prefix = str_replace('\\', '/', $resolved) . '/';
-                $normalized = str_replace('\\', '/', $real);
-                if (strncasecmp($normalized, $prefix, strlen($prefix)) === 0) {
-                    throw new RuntimeException('Configuration must be outside the public web root.');
-                }
-            }
-        }
+        // Reject known public locations before executing the configuration file.
+        Paths::assertPrivate($real, Paths::servedRoots([], false));
         $config = require $real;
         if (!is_array($config)) {
             throw new RuntimeException('The external configuration must return an array.');
@@ -35,11 +25,14 @@ function bmaConfig(?string $configPath = null): array
         'APP_ERROR_LOG','SESSION_SAVE_PATH','SESSION_IDLE_SECONDS','SESSION_ABSOLUTE_SECONDS','LOGIN_WINDOW_SECONDS','LOGIN_MAX_ATTEMPTS','LOGIN_IP_MAX_ATTEMPTS',
         'COGNITO_SOURCE_TIMEZONE','COGNITO_FORM_NAMESPACE','IMPORT_TEMP_DIR','PUBLIC_WEB_ROOT','IMPORT_ABANDONED_SECONDS',
         'IMPORT_MAX_BYTES','AUTO_MATCH_THRESHOLD','REVIEW_THRESHOLD'] as $key) {
-        $value = getenv($key);
+        $value = $key === 'PUBLIC_WEB_ROOT' ? (Paths::deploymentValue($key) ?? false) : getenv($key);
         if ($value !== false) {
             $config[$key] = $value;
         }
     }
+    // PUBLIC_WEB_ROOT may be defined inside the external config, especially for CLI.
+    $roots = Paths::servedRoots($config);
+    if (isset($real)) Paths::assertPrivate($real, $roots);
     return $config;
 }
 

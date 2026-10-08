@@ -1,9 +1,9 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/admin/_common.php';
-require_once dirname(__DIR__).'/app/Members/MemberProfileService.php';
-require_once dirname(__DIR__).'/app/Members/MemberProfileAccess.php';
-require_once dirname(__DIR__).'/app/Membership/MembershipMetrics.php';
+require_once APP_ROOT . '/app/Members/MemberProfileService.php';
+require_once APP_ROOT . '/app/Members/MemberProfileAccess.php';
+require_once APP_ROOT . '/app/Membership/MembershipMetrics.php';
 $data=null;$config=adminConfig();requireDashboardAccess('members');if(($_SERVER['REQUEST_METHOD']??'GET')!=='GET'){http_response_code(405);header('Allow: GET');exit('Read-only page.');}
 try{$identifier=MemberProfileIdentifier::fromRequest($_GET);$currency=MemberProfileIdentifier::currency($_GET);$db=bmaDatabase($config);$admin=MemberProfileAccess::canReview($db,$config);$data=(new MemberProfileService(new MemberProfileRepository($db)))->profile($identifier,$currency,$admin);if(!$data){http_response_code(404);$error='Member not found.';}else{$error=null;}}
 catch(InvalidArgumentException){http_response_code(400);$error='Invalid member identifier or currency.';}catch(Throwable){Security::log($config,'REPORT_UNAVAILABLE');http_response_code(503);$error='Member profile unavailable. Check the reporting database.';}

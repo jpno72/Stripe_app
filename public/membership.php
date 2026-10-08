@@ -1,8 +1,8 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/admin/_common.php';
-require_once dirname(__DIR__).'/app/Membership/MembershipRepository.php';
-require_once dirname(__DIR__).'/app/Membership/MembershipMetrics.php';
+require_once APP_ROOT . '/app/Membership/MembershipRepository.php';
+require_once APP_ROOT . '/app/Membership/MembershipMetrics.php';
 $config=adminConfig();requireDashboardAccess('membership');
 if(($_SERVER['REQUEST_METHOD']??'GET')!=='GET'){http_response_code(405);header('Allow: GET');exit('Read-only report.');}
 try {

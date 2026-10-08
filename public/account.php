@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-require_once __DIR__.'/admin/_common.php';require_once dirname(__DIR__).'/app/Security/UserManagement.php';$config=adminConfig();$user=$GLOBALS['bma_current_user'];$error=null;
+require_once __DIR__.'/admin/_common.php';require_once APP_ROOT . '/app/Security/UserManagement.php';$config=adminConfig();$user=$GLOBALS['bma_current_user'];$error=null;
 if(($_SERVER['REQUEST_METHOD']??'GET')==='POST'){Security::csrf($_POST['csrf']??null);try{$current=$_POST['current_password']??null;$password=$_POST['new_password']??null;$confirm=$_POST['confirm_password']??null;if(!is_string($current)||!is_string($password)||!is_string($confirm)||$password!==$confirm)throw new InvalidArgumentException('New passwords must match.');(new UserManagement(bmaDatabase($config)))->changePassword((int)$user['id'],$current,$password);(new Authenticator(bmaDatabase($config),$config))->logout();header('Location: /login.php',true,303);exit;}catch(InvalidArgumentException $e){$error=$e->getMessage();}catch(Throwable){Security::log($config,'PASSWORD_CHANGE_FAILED');$error='Password could not be changed.';}}
 uiLayoutStart('Your account','dashboard','Manage your sign-in credentials.');uiCardStart('Change password','Changing your password signs out all your sessions.');if($error)uiAlert($error);
 ?>

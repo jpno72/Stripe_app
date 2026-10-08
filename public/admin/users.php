@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-require_once __DIR__.'/_common.php';require_once dirname(__DIR__,2).'/app/Security/UserManagement.php';$config=adminConfig('admin');requireDashboardAccess('users');$db=bmaDatabase($config);$actor=adminReviewActor($db,$config);$error=null;
+require_once __DIR__.'/_common.php';require_once APP_ROOT . '/app/Security/UserManagement.php';$config=adminConfig('admin');requireDashboardAccess('users');$db=bmaDatabase($config);$actor=adminReviewActor($db,$config);$error=null;
 if(($_SERVER['REQUEST_METHOD']??'GET')==='POST'){Security::csrf($_POST['csrf']??null);try{$target=filter_var($_POST['user_id']??null,FILTER_VALIDATE_INT,['options'=>['min_range'=>1]]);if(!$target||!is_string($_POST['role']??null))throw new InvalidArgumentException('Invalid account.');(new UserManagement($db))->update($actor,$target,$_POST['role'],isset($_POST['active']));header('Location: /admin/users.php',true,303);exit;}catch(InvalidArgumentException $e){$error=$e->getMessage();}catch(Throwable){Security::log($config,'USER_CHANGE_FAILED');$error='Account could not be updated.';}}
 $users=$db->query('SELECT id,email,display_name,role,is_active,last_login_at FROM app_users ORDER BY id LIMIT 200')->fetchAll();uiLayoutStart('User management','users','Administrator access controls and session revocation.');if($error)uiAlert($error);uiCardStart('Application users','Latest 200 accounts. Create accounts or reset passwords through the private CLI; no default credentials.');
 foreach($users as $user): ?>

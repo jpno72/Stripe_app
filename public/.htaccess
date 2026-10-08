@@ -10,7 +10,7 @@ RewriteRule ^members/(BMA-[0-9]+)/?$ member.php?bma=$1 [L,QSA]
 # Only public/ is a document root. PHP enforces HTTPS, application login and roles.
 # cPanel Directory Privacy may be retained as an additional outer barrier.
 
-<FilesMatch "(?i)^(?:\.|config\.php|composer\.(?:json|lock))">
+<FilesMatch "(?i)^(?:\.|_bootstrap\.php|config\.php|composer\.(?:json|lock))">
 Require all denied
 </FilesMatch>
 <IfModule mod_headers.c>

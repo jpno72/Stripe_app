@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
-require_once dirname(__DIR__).'/app/Security/Authenticator.php';require_once dirname(__DIR__).'/app/Views/components.php';
+require_once __DIR__ . '/_bootstrap.php';
+require_once APP_ROOT . '/app/Security/Authenticator.php';require_once APP_ROOT . '/app/Views/components.php';
 try{$config=bmaConfig();Security::boot($config);$db=bmaDatabase($config);$auth=new Authenticator($db,$config);if($auth->current()){header('Location: /index.php',true,303);exit;}}
 catch(Throwable){if(isset($config))Security::log($config,'LOGIN_UNAVAILABLE');http_response_code(503);exit('Sign-in is unavailable.');}
 $message=null;

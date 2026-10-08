@@ -1,8 +1,8 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/admin/_common.php';
-require_once dirname(__DIR__).'/app/Demographics/DemographicRepository.php';
-require_once dirname(__DIR__).'/app/Demographics/DemographicMetrics.php';
+require_once APP_ROOT . '/app/Demographics/DemographicRepository.php';
+require_once APP_ROOT . '/app/Demographics/DemographicMetrics.php';
 $config=adminConfig();requireDashboardAccess('demographics');
 if(($_SERVER['REQUEST_METHOD']??'GET')!=='GET'){http_response_code(405);header('Allow: GET');exit('Read-only report.');}
 try {

@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/_common.php';
-require_once dirname(__DIR__, 2) . '/app/Matching/MatchReviewService.php';
+require_once APP_ROOT . '/app/Matching/MatchReviewService.php';
 $config = adminConfig('admin');requireDashboardAccess('matches');
 $db = bmaDatabase($config);
 $actor = adminReviewActor($db,$config);

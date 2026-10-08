@@ -1,9 +1,10 @@
 <?php
 declare(strict_types=1);
-require_once dirname(__DIR__, 2) . '/app/Import/bootstrap.php';
-require_once dirname(__DIR__, 2) . '/app/Views/layout.php';
-require_once dirname(__DIR__, 2) . '/app/Security/CurrentUserProvider.php';
-require_once dirname(__DIR__, 2) . '/app/Security/DashboardPermissionService.php';
+require_once dirname(__DIR__) . '/_bootstrap.php';
+require_once APP_ROOT . '/app/Import/bootstrap.php';
+require_once APP_ROOT . '/app/Views/layout.php';
+require_once APP_ROOT . '/app/Security/CurrentUserProvider.php';
+require_once APP_ROOT . '/app/Security/DashboardPermissionService.php';
 
 /** All protected pages use this guard. Administrative routes explicitly require admin. */
 function adminConfig(string $requiredRole='viewer'): array

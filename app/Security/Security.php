@@ -19,7 +19,7 @@ final class Security
         if(!self::https()&& !in_array((string)($_SERVER['REMOTE_ADDR']??''),['127.0.0.1','::1'],true)){http_response_code(403);exit('HTTPS is required.');}
         $key=(string)($config['APP_KEY']??'');if(strlen($key)<32||str_contains($key,'REPLACE')||str_contains($key,'CHANGE_ME'))throw new RuntimeException('Application key must be configured.');
         if($environment==='production')self::privateLogPath($config);
-        if(session_status()!==PHP_SESSION_ACTIVE){$save=(string)($config['SESSION_SAVE_PATH']??'');if($save!==''){session_save_path(dirname(self::privateLogPath(['APP_ERROR_LOG'=>rtrim($save,'/\\').DIRECTORY_SEPARATOR.'session-check'])));}elseif($environment==='production'){throw new RuntimeException('Private session directory required.');}$name=(string)($config['SESSION_COOKIE_NAME']??'bma_session');if(!preg_match('/\A[a-zA-Z][a-zA-Z0-9_]{0,63}\z/D',$name))throw new RuntimeException('Invalid session configuration.');session_name($name);ini_set('session.use_strict_mode','1');ini_set('session.use_only_cookies','1');ini_set('session.use_trans_sid','0');session_set_cookie_params(['lifetime'=>0,'path'=>'/','secure'=>self::https(),'httponly'=>true,'samesite'=>'Strict']);if(!session_start())throw new RuntimeException('Session unavailable.');}
+        if(session_status()!==PHP_SESSION_ACTIVE){$save=(string)($config['SESSION_SAVE_PATH']??'');if($save!==''){session_save_path(self::privateSessionPath($config));}elseif($environment==='production'){throw new RuntimeException('Private session directory required.');}$name=(string)($config['SESSION_COOKIE_NAME']??'bma_session');if(!preg_match('/\A[a-zA-Z][a-zA-Z0-9_]{0,63}\z/D',$name))throw new RuntimeException('Invalid session configuration.');session_name($name);ini_set('session.use_strict_mode','1');ini_set('session.use_only_cookies','1');ini_set('session.use_trans_sid','0');session_set_cookie_params(['lifetime'=>0,'path'=>'/','secure'=>self::https(),'httponly'=>true,'samesite'=>'Strict']);if(!session_start())throw new RuntimeException('Session unavailable.');}
         $_SESSION['csrf']??=bin2hex(random_bytes(32));
         // Existing forms keep their field names, with one shared token lifecycle.
         $_SESSION['import_csrf']=$_SESSION['csrf'];$_SESSION['match_review_csrf']=$_SESSION['csrf'];
@@ -27,11 +27,16 @@ final class Security
     public static function csrf(mixed $token): void {if(!is_string($token)||!isset($_SESSION['csrf'])||!hash_equals($_SESSION['csrf'],$token)){http_response_code(403);exit('Invalid request.');}}
     public static function privateLogPath(array $config): string
     {
-        $path=(string)($config['APP_ERROR_LOG']??'');$directory=realpath(dirname($path));$public=realpath(dirname(__DIR__,2).'/public');
-        if($path===''||$directory===false||!is_writable($directory)||$public===false||is_link($path))throw new RuntimeException('Private error log required.');
-        $normalized=strtolower(str_replace('\\','/',$directory));$roots=[$public];if(!empty($_SERVER['DOCUMENT_ROOT']))$roots[]=$_SERVER['DOCUMENT_ROOT'];
-        foreach($roots as $root){$resolved=realpath($root);if($resolved&&str_starts_with($normalized.'/',strtolower(str_replace('\\','/',$resolved)).'/'))throw new RuntimeException('Error log must be private.');}
-        return $directory.DIRECTORY_SEPARATOR.basename($path);
+        $path=(string)($config['APP_ERROR_LOG']??'');
+        if(!Paths::isAbsolute($path)||is_link($path)||in_array(basename($path),['.','..'],true)||(file_exists($path)&&!is_file($path)))throw new RuntimeException('Private error log required.');
+        $directory=Paths::privateWritableDirectory(dirname($path),$config);
+        $resolved=$directory.DIRECTORY_SEPARATOR.basename($path);
+        Paths::assertPrivate($resolved,Paths::servedRoots($config));
+        return $resolved;
+    }
+    public static function privateSessionPath(array $config): string
+    {
+        return Paths::privateWritableDirectory((string)($config['SESSION_SAVE_PATH']??''),$config);
     }
     public static function log(array $config,string $code): void
     {

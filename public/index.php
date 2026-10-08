@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/admin/_common.php';
-require_once dirname(__DIR__) . '/app/Views/layout.php';
+require_once APP_ROOT . '/app/Views/layout.php';
 
 $config = adminConfig();
 if(($_SERVER['REQUEST_METHOD']??'GET')!=='GET'){http_response_code(405);header('Allow: GET');exit('Read-only report.');}

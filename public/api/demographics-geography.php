@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once dirname(__DIR__).'/admin/_common.php';
-require_once dirname(__DIR__,2).'/app/Demographics/DemographicRepository.php';
+require_once APP_ROOT . '/app/Demographics/DemographicRepository.php';
 $config=adminConfig();requireDashboardAccess('demographics');
 if(($_SERVER['REQUEST_METHOD']??'GET')!=='GET'){http_response_code(405);header('Allow: GET');exit('Read-only report.');}header('Content-Type: application/json; charset=utf-8');
 try {

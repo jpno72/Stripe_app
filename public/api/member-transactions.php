@@ -1,8 +1,8 @@
 <?php
 declare(strict_types=1);
 require_once dirname(__DIR__).'/admin/_common.php';
-require_once dirname(__DIR__,2).'/app/Members/MemberProfileRepository.php';
-require_once dirname(__DIR__,2).'/app/Membership/MembershipMetrics.php';
+require_once APP_ROOT . '/app/Members/MemberProfileRepository.php';
+require_once APP_ROOT . '/app/Membership/MembershipMetrics.php';
 $config=adminConfig();requireDashboardAccess('members');header('Content-Type: application/json; charset=utf-8');
 if(($_SERVER['REQUEST_METHOD']??'GET')!=='GET'){http_response_code(405);header('Allow: GET');exit('{"error":"Read-only endpoint."}');}
 try{$repo=new MemberProfileRepository(bmaDatabase($config));$member=$repo->find(MemberProfileIdentifier::fromRequest($_GET));if(!$member){http_response_code(404);exit('{"error":"Member not found."}');}$currency=MemberProfileIdentifier::currency($_GET);$search=$_GET['search']['value']??'';if(!is_string($search))throw new InvalidArgumentException();$page=$repo->transactionPage((int)$member['member_id'],$currency,$search,(int)($_GET['start']??0),(int)($_GET['length']??25),(int)($_GET['order'][0]['column']??0),(string)($_GET['order'][0]['dir']??'desc'));$rows=[];foreach($page['rows'] as $row){$rows[]=array_map('uiEscape',[$row['stripe_created_at']??'Unknown',$row['payer_name']?:'Unknown',MembershipMetrics::rate($row['amount_minor'],$row['currency']),MembershipMetrics::rate($row['is_paid']?$row['stripe_fees_minor']:null,$row['currency']),MembershipMetrics::rate($row['is_paid']?$row['net_after_recorded_costs_minor']:null,$row['currency']),$row['status']??'Unknown',$row['stripe_charge_id'],$row['stripe_invoice_id']??'Unavailable']);}echo json_encode(['draw'=>(int)($_GET['draw']??0),'recordsTotal'=>$page['total'],'recordsFiltered'=>$page['filtered'],'data'=>$rows],JSON_INVALID_UTF8_SUBSTITUTE|JSON_THROW_ON_ERROR);}catch(InvalidArgumentException){http_response_code(400);echo '{"error":"Invalid member or filters."}';}catch(Throwable){Security::log($config,'REPORT_UNAVAILABLE');http_response_code(503);echo '{"error":"Transactions unavailable."}';}
