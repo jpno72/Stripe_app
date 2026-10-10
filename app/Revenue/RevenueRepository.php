@@ -8,8 +8,8 @@ final class RevenueRepository
 
     public function latestMonth(): ?string
     {
-        $value = $this->db->query('SELECT MAX(month_start_utc) FROM vw_monthly_revenue')->fetchColumn();
-        return $value === false || $value === null ? null : (string) $value;
+        $value = $this->db->query('SELECT MAX(stripe_created_at) FROM vw_transaction_summary WHERE is_paid=1')->fetchColumn();
+        return $value === false || $value === null ? null : AppTime::utc((string)$value)?->setTimezone(AppTime::zone())->format('Y-m-01');
     }
 
     public function options(): array
@@ -39,10 +39,10 @@ final class RevenueRepository
     private function where(RevenueFilters $filters, array &$params, string $search = ''): string
     {
         $where = ['t.stripe_created_at IS NOT NULL'];
-        if ($filters->from !== null) { $where[] = 't.stripe_created_at >= ?'; $params[] = $filters->from . ' 00:00:00'; }
+        if ($filters->from !== null) { $where[] = 't.stripe_created_at >= ?'; $params[] = AppTime::boundary($filters->from); }
         if ($filters->to !== null) {
             $where[] = 't.stripe_created_at < ?';
-            $params[] = (new DateTimeImmutable($filters->to, new DateTimeZone('UTC')))->modify('+1 day')->format('Y-m-d') . ' 00:00:00';
+            $params[] = AppTime::boundary($filters->to, true);
         }
         if ($filters->currency !== '') { $where[] = 't.currency = ?'; $params[] = $filters->currency; }
         if ($filters->program !== '') { $where[] = 's.item_count=1 AND s.single_product_name = ?'; $params[] = $filters->program; }
@@ -83,12 +83,17 @@ final class RevenueRepository
     public function monthlyTrend(RevenueFilters $filters): array
     {
         $params = [];
-        $sql = 'SELECT t.month_start_utc, t.currency, COUNT(*) paid_count, SUM(t.gross_paid_minor) gross_paid_minor,
+        $where = $this->where($filters, $params) . ' AND t.is_paid=1';
+        $range = $this->fetchAll('SELECT MIN(t.stripe_created_at) first_at, MAX(t.stripe_created_at) last_at' . $this->base() . $where, $params)[0];
+        if ($range['first_at'] === null) return [];
+        $groupParams = [];
+        $local = AppTime::localSql('t.stripe_created_at', $range['first_at'], $range['last_at'], $groupParams);
+        $sql = "SELECT DATE_FORMAT($local, '%Y-%m-01') month_start_local, t.currency, COUNT(*) paid_count, SUM(t.gross_paid_minor) gross_paid_minor,
                  CASE WHEN SUM(t.refund_known)=COUNT(*) THEN SUM(t.refunds_minor) ELSE NULL END refunds_minor,
                  CASE WHEN SUM(t.fee_known)=COUNT(*) THEN SUM(t.stripe_fees_minor) ELSE NULL END stripe_fees_minor,
-                 CASE WHEN SUM(t.refund_known)=COUNT(*) AND SUM(t.fee_known)=COUNT(*) THEN SUM(t.net_after_recorded_costs_minor) ELSE NULL END net_after_recorded_costs_minor'
-              . $this->base() . $this->where($filters, $params) . ' AND t.is_paid=1 GROUP BY t.month_start_utc,t.currency ORDER BY t.month_start_utc,t.currency';
-        return $this->fetchAll($sql, $params);
+                 CASE WHEN SUM(t.refund_known)=COUNT(*) AND SUM(t.fee_known)=COUNT(*) THEN SUM(t.net_after_recorded_costs_minor) ELSE NULL END net_after_recorded_costs_minor"
+              . $this->base() . $where . ' GROUP BY month_start_local,t.currency ORDER BY month_start_local,t.currency';
+        return $this->fetchAll($sql, array_merge($groupParams, $params));
     }
 
     public function programBreakdown(RevenueFilters $filters): array

@@ -49,7 +49,7 @@ echo '<p class="small text-muted mt-3">For a production Stripe import, confirm t
 echo '<h2>Recent batches</h2><div class="table-responsive"><table class="table table-striped table-sm"><thead><tr><th>ID</th><th>Source</th><th>Filename</th><th>Uploaded</th><th>Rows</th><th>Inserted</th><th>Updated</th><th>Skipped</th><th>Errors</th><th>Status</th><th>Duplicate</th><th>Diagnostics</th></tr></thead><tbody>';
 foreach ($rows as $r) {
     $meta = json_decode((string)$r['import_options'], true) ?: [];
-    echo '<tr><td>' . e($r['id']) . '</td><td>' . e($r['source_type']) . '</td><td>' . e($r['filename']) . '</td><td>' . e($r['started_at']) . '</td><td>' . e($r['row_count']) . '</td><td>' . e($r['inserted_count']) . '</td><td>' . e($r['updated_count']) . '</td><td>' . e($r['skipped_count']) . '</td><td>' . e($r['error_count']) . '</td><td>' . e($r['status']) . '</td><td>' . (($meta['duplicate_of']??null) ? 'Same file as batch ' . e($meta['duplicate_of']) : '') . '</td><td><a href="import-errors.php?batch=' . e($r['id']) . '">View</a></td></tr>';
+    echo '<tr><td>' . e($r['id']) . '</td><td>' . e($r['source_type']) . '</td><td>' . e($r['filename']) . '</td><td>' . e(AppTime::display($r['started_at'])) . '</td><td>' . e($r['row_count']) . '</td><td>' . e($r['inserted_count']) . '</td><td>' . e($r['updated_count']) . '</td><td>' . e($r['skipped_count']) . '</td><td>' . e($r['error_count']) . '</td><td>' . e($r['status']) . '</td><td>' . (($meta['duplicate_of']??null) ? 'Same file as batch ' . e($meta['duplicate_of']) : '') . '</td><td><a href="import-errors.php?batch=' . e($r['id']) . '">View</a></td></tr>';
 }
 echo '</tbody></table></div>';
 adminFoot();

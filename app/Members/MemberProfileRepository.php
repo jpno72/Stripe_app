@@ -1,14 +1,15 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/MemberProfileIdentifier.php';
+require_once dirname(__DIR__, 2).'/src/AppTime.php';
 final class MemberProfileRepository
 {
     public function __construct(private PDO $db) {}
-    private function rows(string $sql,array $params=[]): array {$q=$this->db->prepare($sql);$q->execute($params);return $q->fetchAll();}
+    private function rows(string $sql,array $params=[]): array {$q=$this->db->prepare(AppTime::calendarSql($sql));$q->execute($params);return $q->fetchAll();}
     public function find(MemberProfileIdentifier $identifier): ?array
     {
         $field=$identifier->memberId!==null?'m.member_id':'m.bma_person_id';$value=$identifier->memberId??$identifier->bma;
-        $rows=$this->rows("SELECT m.member_id,m.person_id,m.bma_person_id,m.member_name,m.member_status,m.member_since,m.member_until,d.age_years,p.email,p.phone,p.city,p.state,p.postal_code,
+        $rows=$this->rows("SELECT m.member_id,m.person_id,m.bma_person_id,m.member_name,m.member_status,m.member_since,m.member_until,CASE WHEN p.birth_date<=CURRENT_DATE() THEN TIMESTAMPDIFF(YEAR,p.birth_date,CURRENT_DATE()) ELSE NULL END age_years,p.email,p.phone,p.city,p.state,p.postal_code,
           f.payer_count,f.payer_person_id,f.payer_member_count,f.financial_attribution_status,f.subscription_allocation_status,
           CASE WHEN m.member_status='active' AND (m.member_until IS NULL OR m.member_until>=CURRENT_DATE()) THEN 'Active' WHEN m.member_status='unknown' AND (m.member_until IS NULL OR m.member_until>=CURRENT_DATE()) THEN 'Unknown' ELSE 'Inactive / non-active' END activity_label
           FROM vw_member_summary m JOIN people p ON p.id=m.person_id JOIN vw_member_demographics d ON d.member_id=m.member_id JOIN vw_member_financial_summary f ON f.member_id=m.member_id WHERE $field=?",[$value]);
@@ -32,10 +33,10 @@ final class MemberProfileRepository
     }
     public function waivers(int $person): array
     {
-        return $this->rows("SELECT w.source_record_id,w.source_id_kind,w.form_namespace,w.source_locator,w.submitted_at,w.source_timezone,w.signed_date,w.signer_print_name,w.relationship_to_student,w.interpretation_status,
+        return $this->rows("SELECT w.source_record_id,w.source_id_kind,w.form_namespace,w.source_locator,JSON_UNQUOTE(JSON_EXTRACT(raw.raw_values, '$.\"Date Submitted\"')) original_submitted_at,w.submitted_at,w.source_timezone,w.signed_date,w.signer_print_name,w.relationship_to_student,w.interpretation_status,
           TRIM(CONCAT_WS(' ',signer.first_name,signer.middle_name,signer.last_name)) signer_name,signer.bma_person_id signer_bma,
           student_link.match_status student_link_status,signer_link.match_status signer_link_status
-          FROM cognito_waivers w JOIN identity_links student_link ON student_link.source_system='cognito' AND student_link.source_type='waiver' AND student_link.source_role='student' AND student_link.external_id=w.source_locator AND student_link.match_status IN ('automatic','confirmed')
+          FROM cognito_waivers w LEFT JOIN raw_cognito_waivers raw ON raw.id=w.latest_raw_id JOIN identity_links student_link ON student_link.source_system='cognito' AND student_link.source_type='waiver' AND student_link.source_role='student' AND student_link.external_id=w.source_locator AND student_link.match_status IN ('automatic','confirmed')
           LEFT JOIN identity_links signer_link ON signer_link.source_system='cognito' AND signer_link.source_type='waiver' AND signer_link.source_role='signer' AND signer_link.external_id=w.source_locator AND signer_link.match_status IN ('automatic','confirmed')
           LEFT JOIN people signer ON signer.id=signer_link.person_id WHERE student_link.person_id=? ORDER BY w.submitted_at DESC,w.id DESC LIMIT 50",[$person]);
     }
@@ -70,9 +71,12 @@ final class MemberProfileRepository
     public function trend(int $member,string $currency): array
     {
         $params=[];$where=$this->paymentWhere($member,$currency,$params);
-        return $this->rows('SELECT t.month_start_utc,t.currency,SUM(t.gross_paid_minor) gross_paid_minor,
+        $range=$this->rows('SELECT MIN(t.stripe_created_at) first_at,MAX(t.stripe_created_at) last_at FROM vw_transaction_summary t'.$where.' AND t.is_paid=1',$params)[0];
+        if($range['first_at']===null)return [];
+        $groupParams=[];$local=AppTime::localSql('t.stripe_created_at',$range['first_at'],$range['last_at'],$groupParams);
+        return $this->rows("SELECT DATE_FORMAT($local, '%Y-%m-01') month_start_local,t.currency,SUM(t.gross_paid_minor) gross_paid_minor,
           CASE WHEN SUM(t.refund_known)=COUNT(*) AND SUM(t.fee_known)=COUNT(*) THEN SUM(t.net_after_recorded_costs_minor) ELSE NULL END net_minor
-          FROM vw_transaction_summary t'.$where.' AND t.is_paid=1 AND t.stripe_created_at IS NOT NULL GROUP BY t.month_start_utc,t.currency ORDER BY t.month_start_utc,t.currency',$params);
+          FROM vw_transaction_summary t".$where." AND t.is_paid=1 AND t.stripe_created_at IS NOT NULL GROUP BY month_start_local,t.currency ORDER BY month_start_local,t.currency",array_merge($groupParams,$params));
     }
     public function transactionPage(int $member,string $currency,string $search,int $offset,int $limit,int $column,string $direction): array
     {

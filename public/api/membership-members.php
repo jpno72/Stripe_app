@@ -17,7 +17,7 @@ try {
         $sub=uiEscape($subscription).($row['subscription_status']!==null?'<span class="d-block small text-secondary">'.uiEscape($row['subscription_status']).'</span>':'');
         $rate=MembershipMetrics::rate($row['monthly_equivalent_minor'],$row['rate_currency']);
         $rate=uiEscape($rate).'<span class="d-block small text-secondary">'.uiEscape(str_replace('_',' ',$row['subscription_allocation_status'])).'</span>';
-        $last=$row['last_payment_at']??'Unavailable';
+        $last=AppTime::display($row['last_payment_at'],'Unavailable');
         $last=uiEscape($last).'<span class="d-block small text-secondary">'.uiEscape(str_replace('_',' ',$row['financial_attribution_status'])).'</span>';
         $rows[]=[uiEscape($row['bma_person_id']),'<a href="'.uiEscape($link).'">'.uiEscape($row['member_name']?:$row['bma_person_id']).'</a>',uiEscape($payer),uiEscape($program),uiEscape($row['member_status']??'Unknown'),uiEscape($row['member_since']??'Unknown'),$sub,$rate,$last];
     }

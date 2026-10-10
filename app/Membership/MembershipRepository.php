@@ -1,10 +1,11 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/MembershipFilters.php';
+require_once dirname(__DIR__, 2).'/src/AppTime.php';
 final class MembershipRepository
 {
     public function __construct(private PDO $db) {}
-    private function rows(string $sql,array $params=[]): array { $q=$this->db->prepare($sql); $q->execute($params); return $q->fetchAll(); }
+    private function rows(string $sql,array $params=[]): array { $q=$this->db->prepare(AppTime::calendarSql($sql)); $q->execute($params); return $q->fetchAll(); }
     private function memberWhere(MembershipFilters $f,array &$params,string $search=''): string
     {
         $w=['1=1'];
@@ -49,22 +50,28 @@ final class MembershipRepository
           COALESCE(SUM(m.member_since IS NOT NULL AND m.member_until IS NOT NULL AND m.member_until<=CURRENT_DATE()),0) completed_spells
           FROM vw_member_summary m".$mw,$p)[0];
         $members['new_members']=$members['unknown_starts']>0 ? null : $members['known_new_members'];
+        $monthStart=$this->db->quote(AppTime::boundary(AppTime::now()->format('Y-m-01')));
+        $dayEnd=$this->db->quote(AppTime::boundary(AppTime::today(),true));
         $p=[];$sw=$this->subscriptionWhere($f,$p);
         $subscriptions=$this->rows("SELECT COUNT(*) subscription_count, COUNT(DISTINCT s.customer_id) customer_count,
           COALESCE(SUM(s.subscription_status='active'),0) active_subscriptions, COALESCE(SUM(s.subscription_status='past_due'),0) past_due,
           COALESCE(SUM(s.subscription_status='canceled' AND s.canceled_at IS NULL),0) unknown_cancellations,
-          COALESCE(SUM(s.canceled_at>=CAST(DATE_FORMAT(CURRENT_DATE(),'%Y-%m-01') AS DATETIME) AND s.canceled_at<DATE_ADD(CURRENT_DATE(),INTERVAL 1 DAY)),0) known_canceled
+          COALESCE(SUM(s.canceled_at>=$monthStart AND s.canceled_at<$dayEnd),0) known_canceled
           FROM vw_subscription_summary s".$sw,$p)[0];
         $subscriptions['canceled_this_month']=$subscriptions['unknown_cancellations']>0 ? null : $subscriptions['known_canceled'];
         $statuses=$this->rows('SELECT COALESCE(s.subscription_status,\'unknown\') label,COUNT(*) count FROM vw_subscription_summary s'.$sw.' GROUP BY s.subscription_status ORDER BY count DESC,label',$p);
         $mrr=$this->rows("SELECT s.currency,COUNT(*) count,COUNT(s.active_mrr_minor) known_count,SUM(s.active_mrr_minor) amount_minor FROM vw_subscription_summary s".$sw." AND s.subscription_status='active' GROUP BY s.currency ORDER BY s.currency",$p);
         // One product bucket per subscription; multi-item and unknown labels are explicit.
         $mix=$this->rows("SELECT CASE WHEN s.item_count>1 THEN 'Multiple items' WHEN s.single_product_name IS NULL THEN 'Unassigned' ELSE s.single_product_name END label,COUNT(*) count FROM vw_subscription_summary s".$sw.' GROUP BY label ORDER BY count DESC,label',$p);
-        $cancellations=$this->rows("SELECT DATE_FORMAT(s.canceled_at,'%Y-%m-01') month,COUNT(*) count FROM vw_subscription_summary s".$sw." AND s.canceled_at>=DATE_SUB(CAST(DATE_FORMAT(CURRENT_DATE(),'%Y-%m-01') AS DATETIME),INTERVAL 11 MONTH) AND s.canceled_at<DATE_ADD(CURRENT_DATE(),INTERVAL 1 DAY) GROUP BY month ORDER BY month",$p);
+        $trendStart=AppTime::boundary(AppTime::now()->modify('first day of this month')->modify('-11 months')->format('Y-m-d'));
+        $trendEnd=AppTime::boundary(AppTime::today(),true);
+        $groupParams=[];$cancelLocal=AppTime::localSql('s.canceled_at',$trendStart,$trendEnd,$groupParams);
+        $cancellations=$this->rows("SELECT DATE_FORMAT($cancelLocal,'%Y-%m-01') month,COUNT(*) count FROM vw_subscription_summary s".$sw." AND s.canceled_at>=? AND s.canceled_at<? GROUP BY month ORDER BY month",array_merge($groupParams,$p,[$trendStart,$trendEnd]));
         $p=[];$mw=$this->memberWhere($f,$p);
-        $retention=$this->rows('SELECT COUNT(*) total_members,COUNT(r.retained_3_months) eligible_3,SUM(r.retained_3_months) retained_3,COUNT(r.retained_6_months) eligible_6,SUM(r.retained_6_months) retained_6,COUNT(r.retained_12_months) eligible_12,SUM(r.retained_12_months) retained_12 FROM vw_member_summary m JOIN vw_member_retention r ON r.member_id=m.member_id'.$mw,$p)[0];
+        $retentionCalendar='(SELECT member_id,' . implode(',',array_map(static fn($months)=>"CASE WHEN member_since IS NULL OR member_since>CURRENT_DATE() OR DATE_ADD(member_since,INTERVAL $months MONTH)>CURRENT_DATE() THEN NULL WHEN member_until IS NOT NULL THEN IF(member_until>=DATE_ADD(member_since,INTERVAL $months MONTH),1,0) WHEN member_status='active' THEN 1 ELSE NULL END retained_{$months}_months",[3,6,12])) . ' FROM vw_member_summary)';
+        $retention=$this->rows('SELECT COUNT(*) total_members,COUNT(r.retained_3_months) eligible_3,SUM(r.retained_3_months) retained_3,COUNT(r.retained_6_months) eligible_6,SUM(r.retained_6_months) retained_6,COUNT(r.retained_12_months) eligible_12,SUM(r.retained_12_months) retained_12 FROM vw_member_summary m JOIN '.$retentionCalendar.' r ON r.member_id=m.member_id'.$mw,$p)[0];
         $events=$this->rows("SELECT DATE_FORMAT(m.member_since,'%Y-%m-01') month,COUNT(*) starts FROM vw_member_summary m".$mw." AND m.member_since>=DATE_SUB(CAST(DATE_FORMAT(CURRENT_DATE(),'%Y-%m-01') AS DATE),INTERVAL 11 MONTH) AND m.member_since<=CURRENT_DATE() GROUP BY month ORDER BY month",$p);
-        $period=$this->db->query("SELECT DATE_FORMAT(CURRENT_DATE(),'%M %Y') label,CURRENT_DATE() as_of")->fetch();
+        $period=['label'=>AppTime::now()->format('F Y'),'as_of'=>AppTime::today()];
         return compact('members','subscriptions','statuses','mrr','mix','retention','events','cancellations','period');
     }
     public function memberPage(MembershipFilters $f,string $search,int $offset,int $limit,int $column,string $direction): array

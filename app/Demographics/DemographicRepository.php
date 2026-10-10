@@ -1,10 +1,11 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/DemographicFilters.php';
+require_once dirname(__DIR__, 2).'/src/AppTime.php';
 final class DemographicRepository
 {
     public function __construct(private PDO $db,private AgeBrackets $brackets) {}
-    private function rows(string $sql,array $params=[]): array {$q=$this->db->prepare($sql);$q->execute($params);return $q->fetchAll();}
+    private function rows(string $sql,array $params=[]): array {$age='CASE WHEN d.birth_date<=CURRENT_DATE() THEN TIMESTAMPDIFF(YEAR,d.birth_date,CURRENT_DATE()) ELSE NULL END';$sql=str_replace('d.age_years',$age,$sql);$sql=str_replace('SELECT '.$age.',','SELECT '.$age.' AS age_years,',$sql);$q=$this->db->prepare(AppTime::calendarSql($sql));$q->execute($params);return $q->fetchAll();}
     private function where(DemographicFilters $f,array &$params): string
     {
         $w=['1=1'];
@@ -45,7 +46,7 @@ final class DemographicRepository
         $cityChart=[];foreach($cities as $row){$cityChart[]=['label'=>($row['city']??'Unknown city').($row['state']!==null?', '.$row['state']:''),'count'=>(int)$row['count']];}
         $zips=$this->rows("SELECT COALESCE(UPPER(NULLIF(TRIM(d.postal_code),'')),'Unknown ZIP') label,COUNT(*) count FROM vw_member_demographics d JOIN vw_member_summary m ON m.member_id=d.member_id".$w.' GROUP BY label ORDER BY count DESC,label LIMIT 10',$params);
         foreach([&$cityChart,&$zips] as &$chart){$other=(int)$stats['total_members']-array_sum(array_column($chart,'count'));if($other>0)$chart[]=['label'=>'Other locations','count'=>$other];}unset($chart);
-        $asOf=$this->db->query('SELECT CURRENT_DATE()')->fetchColumn();
+        $asOf=AppTime::today();
         return ['stats'=>$stats,'age'=>$age,'youth'=>$youth,'cities'=>$cityChart,'zips'=>$zips,'as_of'=>$asOf];
     }
     private function geographySql(DemographicFilters $f,array &$params): string

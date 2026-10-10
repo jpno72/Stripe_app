@@ -11,6 +11,7 @@ return [
     'DB_PASSWORD' => 'REPLACE_WITH_DATABASE_PASSWORD',
     'STRIPE_API_KEY' => 'rk_test_REPLACE_WITH_RESTRICTED_READ_KEY',
     'STRIPE_WEBHOOK_SECRET' => 'whsec_REPLACE_IF_WEBHOOKS_ARE_ENABLED',
+    'APP_DISPLAY_TIMEZONE' => 'America/New_York',
     'APP_ENV' => 'production',
     'APP_URL' => 'https://analytics.example.com',
     'APP_KEY' => 'REPLACE_WITH_RANDOM_APPLICATION_KEY',

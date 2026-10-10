@@ -49,8 +49,8 @@ $period = $filters->label();
 ?>
 <form class="filter-bar revenue-filter mb-4" method="get" action="/revenue" aria-label="Revenue filters">
   <div class="row g-3 align-items-end">
-    <div class="col-6 col-md-3 col-xl-2"><label class="form-label" for="rev-from">From (UTC)</label><input class="form-control" type="date" id="rev-from" name="from" value="<?=uiEscape($filters->from)?>"></div>
-    <div class="col-6 col-md-3 col-xl-2"><label class="form-label" for="rev-to">To (UTC)</label><input class="form-control" type="date" id="rev-to" name="to" value="<?=uiEscape($filters->to)?>"></div>
+    <div class="col-6 col-md-3 col-xl-2"><label class="form-label" for="rev-from">From (local)</label><input class="form-control" type="date" id="rev-from" name="from" value="<?=uiEscape($filters->from)?>"></div>
+    <div class="col-6 col-md-3 col-xl-2"><label class="form-label" for="rev-to">To (local)</label><input class="form-control" type="date" id="rev-to" name="to" value="<?=uiEscape($filters->to)?>"></div>
     <div class="col-6 col-md-3 col-xl-2"><label class="form-label" for="rev-currency">Currency</label><select class="form-select" id="rev-currency" name="currency"><option value="">All currencies</option><?php foreach ($options['currencies'] as $option): ?><option value="<?=uiEscape($option)?>" <?=$filters->currency === $option ? 'selected' : ''?>><?=uiEscape(strtoupper((string)$option))?></option><?php endforeach; ?></select></div>
     <div class="col-6 col-md-3 col-xl-2"><label class="form-label" for="rev-program">Program / product</label><select class="form-select" id="rev-program" name="program"><option value="">All programs</option><?php foreach ($options['programs'] as $option): ?><option value="<?=uiEscape($option)?>" <?=$filters->program === $option ? 'selected' : ''?>><?=uiEscape($option)?></option><?php endforeach; ?></select></div>
     <div class="col-6 col-md-3 col-xl-2"><label class="form-label" for="rev-status">Transaction status</label><select class="form-select" id="rev-status" name="status"><option value="">All statuses</option><?php foreach ($options['statuses'] as $option): ?><option value="<?=uiEscape($option)?>" <?=$filters->status === $option ? 'selected' : ''?>><?=uiEscape($option)?></option><?php endforeach; ?></select></div>
@@ -74,13 +74,13 @@ foreach ($cards as [$label,$value,$detail,$icon]) { echo '<div class="col-12 col
 echo '</div>';
 ?>
 <div class="row g-3 mb-4">
-  <div class="col-12 col-xl-8"><?php uiChartCardStart('Payment trend', 'Monthly gross and net after recorded costs - UTC - integer minor units'); ?><div class="revenue-chart-wrap"><canvas id="revenue-trend" aria-label="Monthly payment trend" role="img"></canvas></div><p id="revenue-trend-empty" class="text-secondary small mb-0" hidden>No comparable monthly values for these filters.</p><?php uiChartCardEnd(); ?></div>
+  <div class="col-12 col-xl-8"><?php uiChartCardStart('Payment trend', 'Monthly gross and net after recorded costs - local calendar months - integer minor units'); ?><div class="revenue-chart-wrap"><canvas id="revenue-trend" aria-label="Monthly payment trend" role="img"></canvas></div><p id="revenue-trend-empty" class="text-secondary small mb-0" hidden>No comparable monthly values for these filters.</p><?php uiChartCardEnd(); ?></div>
   <div class="col-12 col-xl-4"><?php uiChartCardStart('Program composition', 'Top 12 directly linked, single-item products; unassigned charges excluded'); ?><div class="revenue-chart-wrap"><canvas id="revenue-programs" aria-label="Gross payments by program" role="img"></canvas></div><p id="revenue-programs-empty" class="text-secondary small mb-0" hidden>No directly attributed program charges for these filters.</p><?php uiChartCardEnd(); ?></div>
 </div>
 <div class="row g-3 mb-4"><div class="col-12"><?php uiChartCardStart('Stripe fee trend', 'Monthly fees where all included charges have a known same-currency fee'); ?><div class="revenue-chart-wrap revenue-chart-short"><canvas id="revenue-fees" aria-label="Monthly Stripe fee trend" role="img"></canvas></div><p id="revenue-fees-empty" class="text-secondary small mb-0" hidden>Fee amounts are unavailable for the selected period.</p><?php uiChartCardEnd(); ?></div></div>
 <?php
 uiCardStart('Recent transactions', 'One row per Stripe charge. Amounts are integer minor units; unknown components show Unavailable.', 'table-card');
-echo '<div class="table-responsive"><table id="revenue-transactions" class="table align-middle w-100"><thead><tr><th>Date (UTC)</th><th>Member / payer</th><th>Program</th><th>Gross</th><th>Refund</th><th>Fee</th><th>Net</th><th>Status</th><th>Stripe charge ID</th></tr></thead><tbody></tbody></table></div>';
+echo '<div class="table-responsive"><table id="revenue-transactions" class="table align-middle w-100"><thead><tr><th>Date (local)</th><th>Member / payer</th><th>Program</th><th>Gross</th><th>Refund</th><th>Fee</th><th>Net</th><th>Status</th><th>Stripe charge ID</th></tr></thead><tbody></tbody></table></div>';
 uiCardEnd();
 ?>
 <script id="revenue-data" type="application/json"><?=revenueJson(['currency'=>$displayCurrency,'trend'=>$trend,'programs'=>$programs,'filters'=>$filters->query()])?></script>

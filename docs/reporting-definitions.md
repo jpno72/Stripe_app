@@ -62,3 +62,7 @@ The `/membership` page follows these views at member and subscription grain. Its
 ## Demographics dashboard (Step 9)
 
 The `/demographics` page uses derived age_years with configurable display/filter brackets, known-age mean/median, explicit missing-data coverage and aggregate member geography. Its cohort/filter semantics and conservative all-date geographic gross attribution are defined in [demographics-dashboard.md](demographics-dashboard.md). It does not expose birth dates or query medical/ignored waiver text.
+
+## Application local calendar policy — 2026-10-10
+
+Database sessions and the existing SQL views remain UTC. Their `*_utc` columns and aggregate periods retain that meaning. User-facing revenue filters convert local inclusive dates into a half-open UTC interval; overview revenue, Revenue charts and member payment charts group verified instants by America/New_York calendar months. They do not reuse the UTC monthly aggregate as an Eastern aggregate. Completeness, currency isolation and transaction grain are unchanged. Application age, activity, factual member-start events, completed spells and retention milestones use the local as-of date without timezone conversion of DATE fields. See [time-handling.md](time-handling.md) for implementation, deployment and validation.

@@ -22,7 +22,7 @@ if($error!==null){uiAlert($error);uiEmptyState('Demographics unavailable','Corre
 <div class="col-6 col-md-3"><label class="form-label" for="demo-to">Member cohort through</label><input class="form-control" id="demo-to" type="date" name="to" value="<?=uiEscape($filters->to)?>"></div>
 <div class="col-12 col-md-3 d-flex gap-2"><button class="btn btn-primary" type="submit">Apply filters</button><a class="btn btn-outline-secondary" href="/demographics">Reset</a></div></div></form>
 <?php
-uiAlert($data['stats']['total_members'].' members in this scope, as of '.$data['as_of'].' UTC. Ages use known member demographics only. Cohort dates refer to factual membership starts; applying a cohort filter excludes unknown starts.','info');
+uiAlert($data['stats']['total_members'].' members in this scope, as of '.$data['as_of'].' '.AppTime::name().'. Ages use known member demographics only. Cohort dates refer to factual membership starts; applying a cohort filter excludes unknown starts.','info');
 if((int)$data['stats']['total_members']===0){uiEmptyState('No members match these filters','Broaden the filters or review the available member records.');}
 echo '<div class="row g-3 mb-4">';foreach($cards as [$label,$value,$detail]){echo '<div class="col-12 col-sm-6 col-xl-4">';uiKpiCard($label,$value,$detail);echo '</div>';}echo '</div>';
 $charts=[['age','Age distribution','Configured age brackets, including unknown ages.'],['youth','Youth vs adult','Youth is under 18; unknown ages are a separate category.'],['cities','City distribution','Top 10 city/state groups plus other locations; unknown cities included.'],['zips','ZIP / postal distribution','Top 10 postal codes plus other locations; codes retain leading zeros.']];

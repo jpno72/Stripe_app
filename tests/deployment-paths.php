@@ -170,7 +170,7 @@ try {
         preg_match_all('~require_once\\s+APP_ROOT\\s*\\.\\s*[\'\"](/app/[^\'\"]+)[\'\"]~',$text,$m);
         foreach($m[1] as $suffix){if(!is_file($project.$suffix))throw new RuntimeException('Private include missing.');$includes[$suffix]=true;$count++;}
     }
-    pathCheck($count===25,'all 25 private includes resolve through APP_ROOT');
+    pathCheck($count===26,'all 26 private includes resolve through APP_ROOT');
     $code='require '.$bridge.';';foreach(array_keys($includes) as $suffix)$code.='require_once APP_ROOT.'.phpString($suffix).';';$code.='echo "INCLUDES_OK";';
     [$out,$err]=runPathCode($code,['BMA_APP_ROOT'=>$project]);
     pathCheck($out==='INCLUDES_OK'&&$err==='','private include graph loads from split tree');

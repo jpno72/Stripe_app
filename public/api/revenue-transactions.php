@@ -25,7 +25,7 @@ try {
         }
         if ($person === '') { $person = 'Unlinked'; }
         $currency = $row['currency'] === null ? null : (string)$row['currency'];
-        $date = $row['stripe_created_at'] === null ? 'Unknown' : gmdate('M j, Y H:i', strtotime((string)$row['stripe_created_at'] . ' UTC'));
+        $date = $row['stripe_created_at'] === null ? 'Unknown' : AppTime::display($row['stripe_created_at']);
         $data[] = [
             uiEscape($date), $person, uiEscape($row['program_name'] ?? 'Unassigned'),
             uiEscape(revenueCell((int)$row['is_paid'] === 1 ? $row['gross_paid_minor'] : null, $currency)),

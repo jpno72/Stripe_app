@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/Paths.php';
+require_once __DIR__ . '/AppTime.php';
 
 /** Environment wins, including intentional empty values. Never read a web-root config. */
 function bmaConfig(?string $configPath = null): array
@@ -22,7 +23,7 @@ function bmaConfig(?string $configPath = null): array
     }
     foreach (['DB_HOST','DB_PORT','DB_DATABASE','DB_USERNAME','DB_PASSWORD',
         'STRIPE_API_KEY','STRIPE_WEBHOOK_SECRET','APP_ENV','APP_URL','APP_KEY','SESSION_COOKIE_NAME',
-        'APP_ERROR_LOG','SESSION_SAVE_PATH','SESSION_IDLE_SECONDS','SESSION_ABSOLUTE_SECONDS','LOGIN_WINDOW_SECONDS','LOGIN_MAX_ATTEMPTS','LOGIN_IP_MAX_ATTEMPTS',
+        'APP_DISPLAY_TIMEZONE','APP_ERROR_LOG','SESSION_SAVE_PATH','SESSION_IDLE_SECONDS','SESSION_ABSOLUTE_SECONDS','LOGIN_WINDOW_SECONDS','LOGIN_MAX_ATTEMPTS','LOGIN_IP_MAX_ATTEMPTS',
         'COGNITO_SOURCE_TIMEZONE','COGNITO_FORM_NAMESPACE','IMPORT_TEMP_DIR','PUBLIC_WEB_ROOT','IMPORT_ABANDONED_SECONDS',
         'IMPORT_MAX_BYTES','AUTO_MATCH_THRESHOLD','REVIEW_THRESHOLD'] as $key) {
         $value = $key === 'PUBLIC_WEB_ROOT' ? (Paths::deploymentValue($key) ?? false) : getenv($key);
@@ -33,6 +34,7 @@ function bmaConfig(?string $configPath = null): array
     // PUBLIC_WEB_ROOT may be defined inside the external config, especially for CLI.
     $roots = Paths::servedRoots($config);
     if (isset($real)) Paths::assertPrivate($real, $roots);
+    AppTime::configure($config);
     return $config;
 }
 

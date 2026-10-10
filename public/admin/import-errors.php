@@ -18,7 +18,7 @@ echo '<p><a href="imports.php">← Imports</a></p><h1>Batch ' . e($batch) . ' di
 echo '<p>Detected columns: ' . e(implode(', ', json_decode((string)$batchRow['source_headers'], true) ?: [])) . '</p>';
 if (!empty($meta['unknown_headers'])) { echo '<div class="alert alert-warning">Unknown columns ignored: ' . e(implode(', ', $meta['unknown_headers'])) . '</div>'; }
 echo '<table class="table table-sm"><thead><tr><th>Row</th><th>Severity</th><th>Code</th><th>Message</th><th>Time</th></tr></thead><tbody>';
-foreach ($errors as $r) { echo '<tr><td>' . e($r['source_row_number']) . '</td><td>' . e($r['severity']) . '</td><td>' . e($r['error_code']) . '</td><td>' . e($r['error_message']) . '</td><td>' . e($r['created_at']) . '</td></tr>'; }
+foreach ($errors as $r) { echo '<tr><td>' . e($r['source_row_number']) . '</td><td>' . e($r['severity']) . '</td><td>' . e($r['error_code']) . '</td><td>' . e($r['error_message']) . '</td><td>' . e(AppTime::display($r['created_at'])) . '</td></tr>'; }
 echo '</tbody></table>';
 if ($page > 1) { echo '<a class="btn btn-outline-secondary me-2" href="import-errors.php?batch=' . e($batch) . '&amp;page=' . e($page - 1) . '">Previous</a>'; }
 if ($more) { echo '<a class="btn btn-outline-secondary" href="import-errors.php?batch=' . e($batch) . '&amp;page=' . e($page + 1) . '">Next</a>'; }

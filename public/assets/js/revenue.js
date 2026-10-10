@@ -14,7 +14,7 @@
   if (typeof Chart !== 'undefined' && currency) {
     const trend = report.trend.filter(row => row.currency === currency);
     if (trend.length) {
-      const labels = trend.map(row => row.month_start_utc.slice(0, 7));
+      const labels = trend.map(row => row.month_start_local.slice(0, 7));
       new Chart(document.getElementById('revenue-trend'), {
         type: 'line',
         data: {labels, datasets: [
@@ -36,7 +36,7 @@
     if (fees.length) {
       new Chart(document.getElementById('revenue-fees'), {
         type: 'bar',
-        data: {labels: fees.map(row => row.month_start_utc.slice(0, 7)), datasets: [{label: 'Known Stripe fees', data: fees.map(row => Number(row.stripe_fees_minor)), backgroundColor: '#7795b9'}]},
+        data: {labels: fees.map(row => row.month_start_local.slice(0, 7)), datasets: [{label: 'Known Stripe fees', data: fees.map(row => Number(row.stripe_fees_minor)), backgroundColor: '#7795b9'}]},
         options: {responsive: true, maintainAspectRatio: false, plugins: {tooltip: {callbacks: {label: ctx => money(ctx.raw)}}}, scales: {y: {title: {display: true, text: unit}}}}
       });
     } else empty('revenue-fees');

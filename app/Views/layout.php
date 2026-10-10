@@ -64,7 +64,7 @@ function uiLayoutStart(string $title, string $active, string $description = '', 
     echo '<div class="app-main">';
     require __DIR__ . '/partials/header.php';
     echo '<main class="main-content" id="main-content"><div class="content-wrap">';
-    if ($description !== '') { uiPageHeader($label, $title, $description, 'As of ' . gmdate('M j, Y') . ' UTC'); }
+    if ($description !== '') { uiPageHeader($label, $title, $description, 'As of ' . AppTime::now()->format('M j, Y, g:i A T')); }
 }
 
 function uiLayoutEnd(): void

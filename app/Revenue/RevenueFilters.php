@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once dirname(__DIR__, 2) . '/src/AppTime.php';
 
 final class RevenueFilters
 {
@@ -20,7 +21,7 @@ final class RevenueFilters
         $to = self::date($input['to'] ?? null);
         if ($from !== null && $to !== null && $from > $to) { throw new InvalidArgumentException('Start date must precede end date.'); }
         if (!$all && $from === null && $to === null) {
-            $month = $latestMonth ?? gmdate('Y-m-01');
+            $month = $latestMonth ?? AppTime::now()->format('Y-m-01');
             $from = $month;
             $to = (new DateTimeImmutable($month, new DateTimeZone('UTC')))->modify('last day of this month')->format('Y-m-d');
         }
@@ -46,13 +47,13 @@ final class RevenueFilters
     {
         if ($this->from !== null && $this->to !== null) {
             if (substr($this->from, 0, 7) === substr($this->to, 0, 7) && substr($this->from, 8) === '01' && $this->to === (new DateTimeImmutable($this->from, new DateTimeZone('UTC')))->modify('last day of this month')->format('Y-m-d')) {
-                return gmdate('F Y', strtotime($this->from . ' UTC')) . ' · UTC';
+                return (new DateTimeImmutable($this->from, AppTime::zone()))->format('F Y') . ' · ' . AppTime::name();
             }
-            return $this->from . ' to ' . $this->to . ' · UTC';
+            return $this->from . ' to ' . $this->to . ' · ' . AppTime::name();
         }
-        if ($this->from !== null) { return 'From ' . $this->from . ' · UTC'; }
-        if ($this->to !== null) { return 'Through ' . $this->to . ' · UTC'; }
-        return 'All dated transactions · UTC';
+        if ($this->from !== null) { return 'From ' . $this->from . ' · ' . AppTime::name(); }
+        if ($this->to !== null) { return 'Through ' . $this->to . ' · ' . AppTime::name(); }
+        return 'All dated transactions · ' . AppTime::name();
     }
 
     public function query(): array

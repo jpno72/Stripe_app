@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/admin/_common.php';
 require_once APP_ROOT . '/app/Views/layout.php';
+require_once APP_ROOT . '/app/Revenue/RevenueRepository.php';
 
 $config = adminConfig();
 if(($_SERVER['REQUEST_METHOD']??'GET')!=='GET'){http_response_code(405);header('Allow: GET');exit('Read-only report.');}
@@ -44,15 +45,14 @@ if ($page !== 'dashboard') {
 try {
     $db = bmaDatabase($config);
     $hasRecords = (int) $db->query('SELECT (SELECT COUNT(*) FROM members) + (SELECT COUNT(*) FROM stripe_subscriptions) + (SELECT COUNT(*) FROM stripe_transactions)')->fetchColumn() > 0;
-    $activeMembers = (int) $db->query('SELECT COUNT(*) FROM vw_active_members')->fetchColumn();
+    $activeMembers = (int) $db->query(AppTime::calendarSql("SELECT COUNT(*) FROM vw_member_summary WHERE member_status='active' AND (member_until IS NULL OR member_until>=CURRENT_DATE())"))->fetchColumn();
     $activeSubscriptions = (int) $db->query('SELECT COUNT(*) FROM vw_subscription_summary WHERE is_active_subscription = 1')->fetchColumn();
     $paidCharges = (int) $db->query('SELECT COUNT(*) FROM vw_transaction_summary WHERE is_paid = 1')->fetchColumn();
-    $latestMonth = $db->query('SELECT MAX(month_start_utc) FROM vw_monthly_revenue')->fetchColumn();
+    $revenue = new RevenueRepository($db);
+    $latestMonth = $revenue->latestMonth();
     $monthly = [];
     if ($latestMonth !== false && $latestMonth !== null) {
-        $statement = $db->prepare('SELECT currency, gross_paid_minor FROM vw_monthly_revenue WHERE month_start_utc = ? ORDER BY currency');
-        $statement->execute([$latestMonth]);
-        $monthly = $statement->fetchAll();
+        $monthly = $revenue->totalsByCurrency(RevenueFilters::fromRequest([], $latestMonth));
     }
     $recentImports = $db->query('SELECT source_type, started_at, row_count, status FROM vw_import_health ORDER BY import_batch_id DESC LIMIT 4')->fetchAll();
 } catch (Throwable) {Security::log($config,'REPORT_UNAVAILABLE');
@@ -77,7 +77,7 @@ $monthlyValue = '—';
 $monthlyDetail = 'No dated paid charges yet';
 if (count($monthly) === 1) {
     $monthlyValue = uiFormatMinorUnits($monthly[0]['gross_paid_minor']);
-    $monthlyDetail = strtoupper((string) $monthly[0]['currency']) . ' minor units · ' . gmdate('M Y', strtotime((string) $latestMonth . ' UTC'));
+    $monthlyDetail = strtoupper((string) $monthly[0]['currency']) . ' minor units · ' . (new DateTimeImmutable($latestMonth, AppTime::zone()))->format('M Y') . ' · ' . AppTime::name();
 } elseif (count($monthly) > 1) {
     $monthlyDetail = 'Multiple currencies · view revenue separately';
 }
@@ -101,7 +101,7 @@ if(canViewDashboard('matches')){echo '<a class="quick-link" href="/admin/matches
 if(canViewDashboard('reports')){echo '<a class="quick-link" href="/index.php?page=reports"><span>Open reports workspace</span><span aria-hidden="true">↗</span></a>';}
 uiCardEnd(); echo '</div></div>';
 
-uiTableCardStart('Recent imports', 'Latest processing attempts; counts are source rows.', ['Source', 'Started (UTC)', 'Rows', 'Status'], 'recent-imports');
+uiTableCardStart('Recent imports', 'Latest processing attempts; counts are source rows.', ['Source', 'Started (local)', 'Rows', 'Status'], 'recent-imports');
 if ($recentImports === []) {
     echo '<tr><td colspan="4" class="text-center text-secondary py-4">No import batches yet.</td></tr>';
 } else {
@@ -109,8 +109,7 @@ if ($recentImports === []) {
         $status = (string) $batch['status'];
         $tone = match ($status) { 'completed' => 'success', 'completed_with_errors' => 'warning', 'failed' => 'danger', default => 'neutral' };
         echo '<tr><td class="fw-semibold">' . uiEscape(str_replace('_', ' ', (string) $batch['source_type'])) . '</td>';
-        $started = strtotime((string) $batch['started_at'] . ' UTC');
-        echo '<td>' . uiEscape($started === false ? $batch['started_at'] : gmdate('M j, Y · H:i', $started)) . '</td><td>' . uiEscape($batch['row_count']) . '</td><td>';
+        echo '<td>' . uiEscape(AppTime::display($batch['started_at'])) . '</td><td>' . uiEscape($batch['row_count']) . '</td><td>';
         uiStatusBadge(str_replace('_', ' ', $status), $tone);
         echo '</td></tr>';
     }

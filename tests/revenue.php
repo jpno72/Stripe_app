@@ -11,16 +11,16 @@ check($month !== null,'latest month exists');
 $last=(new DateTimeImmutable($month,new DateTimeZone('UTC')))->modify('last day of this month')->format('Y-m-d');
 $f=RevenueFilters::fromRequest(['from'=>$month,'to'=>$last,'currency'=>'usd'],$month);
 $actual=$repo->totalsByCurrency($f);
-$q=$db->prepare('SELECT gross_paid_minor,refunds_minor,stripe_fees_minor,net_after_recorded_costs_minor,transaction_count FROM vw_monthly_revenue WHERE month_start_utc=? AND currency=?');
-$q->execute([$month,'usd']); $view=$q->fetch();
+$q=$db->prepare('SELECT SUM(gross_paid_minor) gross_paid_minor,CASE WHEN SUM(refund_known)=COUNT(*) THEN SUM(refunds_minor) ELSE NULL END refunds_minor,CASE WHEN SUM(fee_known)=COUNT(*) THEN SUM(stripe_fees_minor) ELSE NULL END stripe_fees_minor,CASE WHEN SUM(refund_known)=COUNT(*) AND SUM(fee_known)=COUNT(*) THEN SUM(net_after_recorded_costs_minor) ELSE NULL END net_after_recorded_costs_minor,COUNT(*) transaction_count FROM vw_transaction_summary WHERE stripe_created_at>=? AND stripe_created_at<? AND currency=? AND is_paid=1');
+$q->execute([AppTime::boundary($month),AppTime::boundary($last,true),'usd']); $view=$q->fetch();
 check(count($actual)===1 && $view !== false,'month and currency produce one comparable row');
 foreach (['gross_paid_minor','refunds_minor','stripe_fees_minor','net_after_recorded_costs_minor'] as $key) {
-    check($actual[0][$key] === $view[$key] || (string)$actual[0][$key] === (string)$view[$key], 'KPI agrees with monthly view: '.$key);
+    check($actual[0][$key] === $view[$key] || (string)$actual[0][$key] === (string)$view[$key], 'KPI agrees with local transaction period: '.$key);
 }
-check((int)$actual[0]['paid_count']===(int)$view['transaction_count'],'paid charge count agrees with monthly view');
+check((int)$actual[0]['paid_count']===(int)$view['transaction_count'],'paid charge count agrees with local transaction period');
 $page=$repo->transactionPage($f,'',0,100,0,'desc');
 $q=$db->prepare('SELECT COUNT(*) FROM vw_transaction_summary WHERE stripe_created_at>=? AND stripe_created_at<? AND currency=?');
-$q->execute([$month.' 00:00:00',(new DateTimeImmutable($last))->modify('+1 day')->format('Y-m-d').' 00:00:00','usd']);
+$q->execute([AppTime::boundary($month),AppTime::boundary($last,true),'usd']);
 $expected=(int)$q->fetchColumn();
 check($page['total']===$expected,'transaction table preserves one charge per view row');
 $status=RevenueFilters::fromRequest(['from'=>$month,'to'=>$last,'currency'=>'usd','status'=>'paid'],$month);
