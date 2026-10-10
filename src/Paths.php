@@ -7,9 +7,9 @@ final class Paths
     public static function deploymentValue(string $name): ?string
     {
         $value = getenv($name);
-        if ($value !== false) return $value;
+        if (is_string($value) && trim($value, " \t\n\r\v\f") !== '') return $value;
         $value = $_SERVER[$name] ?? null;
-        return is_string($value) ? $value : null;
+        return is_string($value) && trim($value, " \t\n\r\v\f") !== '' ? $value : null;
     }
 
     public static function isAbsolute(string $path): bool

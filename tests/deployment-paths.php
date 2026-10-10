@@ -43,15 +43,15 @@ try {
     file_put_contents($config,'<?php return '.var_export($data,true).';');
     // Substitute only the copied fixture's controlled fallback literals; never create production paths locally.
     $bridgeFile=$public.'/_bootstrap.php';$bridgeText=file_get_contents($bridgeFile);
-    if(!preg_match('~\$_SERVER\[\'BMA_APP_ROOT\'\] \?\? \'([^\']+)\'~',$bridgeText,$rootFallback)
+    if(!preg_match('~\$root \?\?= \'([^\']+)\'~',$bridgeText,$rootFallback)
         || !preg_match("~Paths::deploymentValue\\('BMA_CONFIG_FILE'\\) \\?\\? '([^']+)'~",$bridgeText,$configFallback))throw new RuntimeException('Central fallback declarations missing.');
     $bridgeText=str_replace([phpString($rootFallback[1]),phpString($configFallback[1])],[phpString($project),phpString($config)],$bridgeText);
     file_put_contents($bridgeFile,$bridgeText);
     $bridge=phpString($public.'/_bootstrap.php');
     $probe='register_shutdown_function(function(){echo "|STATUS=".http_response_code();}); require '.$bridge.'; echo "|OK=".APP_ROOT;';
-    foreach ([['BMA_APP_ROOT'=>''],['BMA_APP_ROOT'=>$fixture.'/missing'],['BMA_APP_ROOT'=>'relative/path'],['BMA_APP_ROOT'=>$private]] as $env) {
+    foreach ([['BMA_APP_ROOT'=>$fixture.'/missing'],['BMA_APP_ROOT'=>'relative/path'],['BMA_APP_ROOT'=>$private]] as $env) {
         [$out,$err]=runPathCode((($env['BMA_APP_ROOT']??null)===''?'putenv("BMA_APP_ROOT=");':'').$probe,$env);
-        pathCheck($out==='Application access is unavailable.|STATUS=503'&&$err==='','supplied empty/nonexistent/relative/incomplete root fails generically');
+        pathCheck($out==='Application access is unavailable.|STATUS=503'&&$err==='','supplied nonexistent/relative/incomplete root fails generically');
     }
     [$out,$err]=runPathCode($probe,['BMA_APP_ROOT'=>$project]);
     pathCheck(str_contains($out,'|OK='.realpath($project))&&$err==='','valid split application root resolves');
@@ -61,7 +61,7 @@ try {
     [$out,$err]=runPathCode('$_SERVER["HTTP_BMA_APP_ROOT"]='.phpString($source).';'.$probe);
     pathCheck(str_contains($out,'|OK='.realpath($project))&&$err==='','client path header ignored; approved fallback retained');
     [$out,$err]=runPathCode('putenv("BMA_APP_ROOT=");$_SERVER["BMA_APP_ROOT"]='.phpString($project).';'.$probe);
-    pathCheck($out==='Application access is unavailable.|STATUS=503'&&$err==='','explicit empty environment root wins over server value');
+    pathCheck(str_contains($out,'|OK='.realpath($project))&&$err==='','blank environment root falls through to trusted server');
 
     [$out,$err]=runPathCode($probe);
     pathCheck(str_contains($out,'|OK='.realpath($project))&&$err==='','absent runtime app root uses controlled fallback');
@@ -87,7 +87,24 @@ try {
         pathCheck($out==='Application access is unavailable.|STATUS=503'&&$err==='','supplied invalid config fails generically instead of falling back');
     }
     [$out,$err]=runPathCode('putenv("BMA_CONFIG_FILE=");'.$probe);
-    pathCheck($out==='Application access is unavailable.|STATUS=503'&&$err==='','explicit empty config path does not silently fall back');
+    pathCheck(str_contains($out,'|OK='.realpath($project))&&$err==='','blank environment config uses approved fallback');
+    // Exercise blanks inside PHP: Windows proc_open can drop empty environment entries.
+    foreach (['BMA_APP_ROOT','BMA_CONFIG_FILE'] as $key) {
+        $valid=$key==='BMA_APP_ROOT'?$source:$overrideConfig;
+        $result=$key==='BMA_APP_ROOT'?'echo "ROOT=".APP_ROOT;':'require APP_ROOT."/src/database.php";$c=bmaConfig();echo "CONFIG=".($c["fallback_test"]??"fallback");';
+        $expectedFallback=$key==='BMA_APP_ROOT'?'ROOT='.realpath($project):'CONFIG=fallback';
+        $expectedServer=$key==='BMA_APP_ROOT'?'ROOT='.realpath($source):'CONFIG=runtime';
+        foreach ([false,''," \t\r\n"] as $environmentValue) {
+            $setup=$environmentValue===false?'putenv('.phpString($key).');':'putenv('.phpString($key.'='.$environmentValue).');';
+            foreach (['missing',null,false,''," \t\n"] as $serverValue) {
+                $server=$serverValue==='missing'?'unset($_SERVER['.phpString($key).']);':'$_SERVER['.phpString($key).']='.var_export($serverValue,true).';';
+                [$out,$err]=runPathCode($setup.$server.'require '.$bridge.';'.$result);
+                pathCheck($out===$expectedFallback&&$err==='',$key.' missing/blank environment and server resolve fallback: '.var_export($environmentValue,true).'/'.var_export($serverValue,true));
+            }
+            [$out,$err]=runPathCode($setup.'$_SERVER['.phpString($key).']='.phpString($valid).';require '.$bridge.';'.$result);
+            pathCheck($out===$expectedServer&&$err==='',$key.' false/blank environment falls through to valid server value');
+        }
+    }
     $unsafeConfig=$public.'/unsafe-config.php';file_put_contents($unsafeConfig,'<?php echo "EXECUTED"; return [];');
     [$out,$err]=runPathCode($probe,['BMA_CONFIG_FILE'=>$unsafeConfig]);
     pathCheck($out==='Application access is unavailable.|STATUS=503'&&$err==='','bootstrap rejects config inside actual public root without execution');

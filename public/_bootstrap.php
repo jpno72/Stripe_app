@@ -9,7 +9,10 @@ if (PHP_SAPI !== 'cli' && realpath((string)($_SERVER['SCRIPT_FILENAME'] ?? '')) 
 }
 try {
     $root = getenv('BMA_APP_ROOT');
-    if ($root === false) $root = $_SERVER['BMA_APP_ROOT'] ?? '/home/bbmmacom/repositories/Stripe_app';
+    // Only nonblank trusted runtime paths override the controlled fallback.
+    if (!is_string($root) || trim($root, " \t\n\r\v\f") === '') $root = $_SERVER['BMA_APP_ROOT'] ?? null;
+    if (!is_string($root) || trim($root, " \t\n\r\v\f") === '') $root = null;
+    $root ??= '/home/bbmmacom/repositories/Stripe_app';
     if (!is_string($root) || $root === '' || str_contains($root, "\0")
         || !(str_starts_with($root, '/') || preg_match('~^[A-Za-z]:[\\\\/]~', $root) === 1 || str_starts_with($root, '\\\\'))) {
         throw new RuntimeException();
@@ -34,7 +37,14 @@ try {
     Paths::assertPrivate($configFile, Paths::servedRoots([], false));
     define('BMA_CONFIG_PATH', $configFile);
     define('APP_ROOT', $root);
-} catch (Throwable) {
+} catch (Throwable $e) {
+    error_log(
+        'BMA bootstrap failure: ' .
+        get_class($e) . ': ' .
+        $e->getMessage() .
+        ' at ' . $e->getFile() . ':' . $e->getLine()
+    );
+
     http_response_code(503);
     exit('Application access is unavailable.');
 }
