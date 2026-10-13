@@ -93,6 +93,18 @@ final class Normalizers
         };
     }
 
+    /** Unified Payments exports use both charge/payment ID prefixes. Other IDs remain strict. */
+    public static function stripeTransactionId(?string $value): string
+    {
+        if ($value !== null && str_contains($value, "\0")) { throw new RuntimeException('INVALID_IDENTIFIER'); }
+        $value = self::text($value);
+        if ($value === null || strlen($value) > 255
+            || !preg_match('/\A(?:ch_|py_)[A-Za-z0-9_]+\z/D', $value)) {
+            throw new RuntimeException('INVALID_IDENTIFIER');
+        }
+        return $value;
+    }
+
     public static function stripeId(?string $value, string $prefix, bool $required = false): ?string
     {
         $value = self::text($value);

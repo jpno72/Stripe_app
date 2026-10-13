@@ -6,7 +6,7 @@ final class StripeTransactionImporter extends AbstractImporter
     public function import(PDO $db, ApprovedRecord $record, int $rawId, bool $dryRun, array $options): array
     {
         $v = $record->values();
-        $external = Normalizers::stripeId($v['id'], 'ch_', true);
+        $external = Normalizers::stripeTransactionId($v['id']);
         $existing = $this->existing($db, 'stripe_transactions', 'stripe_charge_id', $external);
         if ($existing && $this->sameRaw($db, $existing['latest_raw_id'] === null ? null : (int)$existing['latest_raw_id'], 'raw_stripe_transactions', $record->contentHash())) { return ['skipped', []]; }
         $customerExternal = Normalizers::stripeId($v['Customer ID'], 'cus_');
