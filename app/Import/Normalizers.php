@@ -93,6 +93,18 @@ final class Normalizers
         };
     }
 
+    /** Unified Customers export keys; guests are Dashboard groups, never Customer API objects. */
+    public static function stripeCustomerExportId(?string $value): string
+    {
+        if ($value !== null && str_contains($value, "\0")) { throw new RuntimeException('INVALID_IDENTIFIER'); }
+        $value = self::text($value);
+        if ($value === null || strlen($value) > 255
+            || !preg_match('/\A(?:cus_|gcus_)[A-Za-z0-9_]+\z/D', $value)) {
+            throw new RuntimeException('INVALID_IDENTIFIER');
+        }
+        return $value;
+    }
+
     /** Unified Payments exports use both charge/payment ID prefixes. Other IDs remain strict. */
     public static function stripeTransactionId(?string $value): string
     {

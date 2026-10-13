@@ -1,0 +1,31 @@
+-- Dashboard guest groups are isolated from Customer API objects, member identity and payment ownership.
+-- Existing regular customer rows, relationships, financial data and historical migrations are unchanged.
+CREATE TABLE stripe_guest_customers (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  stripe_guest_customer_id VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  record_type VARCHAR(30) NOT NULL DEFAULT 'dashboard_guest',
+  name VARCHAR(255) NULL,
+  email VARCHAR(254) NULL,
+  email_normalized VARCHAR(254) NULL,
+  address_line1 VARCHAR(255) NULL,
+  address_city VARCHAR(100) NULL,
+  address_postal_code VARCHAR(32) NULL,
+  address_country CHAR(2) NULL,
+  export_created_at DATETIME(6) NULL,
+  payment_count BIGINT UNSIGNED NULL,
+  total_spend_minor BIGINT NULL,
+  refunded_volume_minor BIGINT NULL,
+  dispute_losses_minor BIGINT NULL,
+  summary_currency CHAR(3) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  latest_raw_id BIGINT UNSIGNED NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_stripe_guest_customer (stripe_guest_customer_id),
+  KEY ix_guest_customer_raw (latest_raw_id),
+  CONSTRAINT fk_guest_customer_raw FOREIGN KEY (latest_raw_id) REFERENCES raw_stripe_customers (id),
+  CONSTRAINT ck_guest_customer_type CHECK (record_type = 'dashboard_guest'),
+  CONSTRAINT ck_guest_customer_id CHECK (stripe_guest_customer_id REGEXP '^gcus_[A-Za-z0-9_]+$'),
+  CONSTRAINT ck_guest_customer_money CHECK (total_spend_minor IS NULL AND refunded_volume_minor IS NULL AND dispute_losses_minor IS NULL OR summary_currency IS NOT NULL),
+  CONSTRAINT ck_guest_customer_currency CHECK (summary_currency IS NULL OR summary_currency REGEXP '^[a-z]{3}$')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -7,7 +7,7 @@ abstract class AbstractImporter
 
     protected function existing(PDO $db, string $table, string $key, string $value): ?array
     {
-        $allowed = ['stripe_customers'=>['stripe_customer_id'], 'stripe_subscriptions'=>['stripe_subscription_id'], 'stripe_transactions'=>['stripe_charge_id'], 'cognito_waivers'=>['source_locator']];
+        $allowed = ['stripe_customers'=>['stripe_customer_id'], 'stripe_guest_customers'=>['stripe_guest_customer_id'], 'stripe_subscriptions'=>['stripe_subscription_id'], 'stripe_transactions'=>['stripe_charge_id'], 'cognito_waivers'=>['source_locator']];
         if (!in_array($key, $allowed[$table] ?? [], true)) { throw new RuntimeException('INVALID_LOOKUP'); }
         $q = $db->prepare("SELECT * FROM $table WHERE $key = ?"); $q->execute([$value]);
         return $q->fetch() ?: null;

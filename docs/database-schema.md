@@ -207,3 +207,7 @@ Migration 006 adds `app_users.auth_version` for session revocation and extends t
 ## Dashboard authorization migration
 
 Migration 007 adds dashboards, role_dashboard_permissions and user_dashboard_overrides, with unique stable registry keys and composite permission primary keys. Overrides reference existing app_users; both permission tables reference dashboards. See [dashboard-access-control.md](dashboard-access-control.md) for defaults, safeguards and validation. Existing migrations and normalized business tables remain unchanged.
+
+## Dashboard guest customer groups — migration 008
+
+`stripe_guest_customers` isolates gcus_ Unified Customers export records from regular `stripe_customers`. Its persisted `record_type=dashboard_guest` and unique full source key identify a Dashboard grouping. Its only association is latest_raw_id → raw_stripe_customers → import_batches. There is no person/member/payment/subscription ownership link. Existing regular foreign keys and identity services remain unchanged. Monetary summaries remain NULL until currency is verified. See [stripe-guest-customers.md](stripe-guest-customers.md) for evidence, constraints and upgrade instructions.

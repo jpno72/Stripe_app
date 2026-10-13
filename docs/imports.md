@@ -43,3 +43,7 @@ If a Stripe source row's explicit customer/invoice reference disagrees with an e
 ## Observed supplied exports
 
 The supplied shelled files contain many empty rows: customers 47 records (1 populated), subscriptions 1 (1 populated), transactions 36 (2 populated), Cognito 350 (1 populated). The transaction file has one customer ID not present in the customer export and one transaction without a customer ID. Customer, subscription, and transaction fee currency is not established where the respective field is absent. Cognito's submission timestamp is timezone-naive. No source has an unknown header or malformed CSV in these samples. See the import history after a test run for exact batch outcomes.
+
+## Unified Customers guest exports
+
+After additive migration 008, customer imports accept regular cus_ records and Dashboard gcus_ groups. Regular rows retain their existing destination; guest rows go only to stripe_guest_customers, using the same approved raw staging and unchanged field allowlist. Groups do not enter matching or financial ownership. Shared contacts never merge the two kinds. Summary currency warnings remain expected. Partially successful imports can be deliberately retried by an operator; exact-ID/content duplicate checks preserve existing successful rows. See [stripe-guest-customers.md](stripe-guest-customers.md) for the 51-row dry-run results and deployment order.
