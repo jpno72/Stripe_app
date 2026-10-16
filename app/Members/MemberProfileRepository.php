@@ -33,7 +33,7 @@ final class MemberProfileRepository
     }
     public function waivers(int $person): array
     {
-        return $this->rows("SELECT w.source_record_id,w.source_id_kind,w.form_namespace,w.source_locator,JSON_UNQUOTE(JSON_EXTRACT(raw.raw_values, '$.\"Date Submitted\"')) original_submitted_at,w.submitted_at,w.source_timezone,w.signed_date,w.signer_print_name,w.relationship_to_student,w.interpretation_status,
+        return $this->rows("SELECT w.source_record_id,w.source_id_kind,w.form_namespace,w.source_locator,COALESCE(JSON_UNQUOTE(JSON_EXTRACT(raw.raw_values, '$.\"Date Submitted\"')),JSON_UNQUOTE(JSON_EXTRACT(raw.raw_values, '$.Entry_DateSubmitted'))) original_submitted_at,w.submitted_at,w.source_timezone,w.signed_date,w.signer_print_name,w.relationship_to_student,w.interpretation_status,
           TRIM(CONCAT_WS(' ',signer.first_name,signer.middle_name,signer.last_name)) signer_name,signer.bma_person_id signer_bma,
           student_link.match_status student_link_status,signer_link.match_status signer_link_status
           FROM cognito_waivers w LEFT JOIN raw_cognito_waivers raw ON raw.id=w.latest_raw_id JOIN identity_links student_link ON student_link.source_system='cognito' AND student_link.source_type='waiver' AND student_link.source_role='student' AND student_link.external_id=w.source_locator AND student_link.match_status IN ('automatic','confirmed')

@@ -1,6 +1,6 @@
 # Cognito source meanings and identity
 
-## What the supplied file establishes
+## Original shelled file (legacy format)
 
 The actual headings are Email, Date Submitted, Name, Phone, Text Friendly, Student Birthdate, Address, Emergency Contact, Emergency contact Phone, considerations, goals, Print Name, Date, and Relationship to student. There is one populated shelled record. Its relationship label is Self. Name and Print Name contain different source text, so the sample does not justify treating them as one person. There is no form definition or genuine entry/submission ID in the export.
 
@@ -28,7 +28,7 @@ Explicit ISO offsets, when present in future approved timestamp values, take pre
 There is no row position or file hash in a waiver identity. source_row_number identifies a staging position for diagnostics only.
 
 1. Require a stable, configured COGNITO_FORM_NAMESPACE. The example bma-waiver is an operator namespace, not an exported Cognito form ID. Do not change it after importing without an explicit identity migration.
-2. Prefer a trusted genuine entry ID if an approved future export mapping/API supplies one. source_record_id stores that original ID; source_id_kind is external. Current exports have no such field, so source_record_id is NULL.
+2. Prefer a trusted genuine entry ID when supplied by an approved source adapter. The native BMA2 adapter now supplies one; the fallback rules below remain for the legacy format. source_record_id stores that original ID; source_id_kind is external. That legacy shelled format has no such field, so its source_record_id remains NULL.
 3. Otherwise use the tuple [namespace, canonical Date Submitted, canonical Name, canonical Print Name]. Both names are uninterpreted source labels. Canonical names are trimmed, whitespace-collapsed, and Unicode-lowercased. The timestamp is formatted YYYY-MM-DD HH:MM:SS with an instant: prefix for explicit-offset UTC timestamps or civil: for unzoned clock readings. The fallback requires all three fields; missing components produce IDENTITY_AMBIGUOUS rather than email/row-position identity.
 4. source_locator is cog-v1- followed by the SHA-256 of the ordered tuple encoded as unescaped-Unicode JSON. The genuine-ID tuple is [namespace, original entry ID]. Date canonicalization is independent of the configured zone for naive values, so a later timezone resolution does not change identity.
 5. content_hash is SHA-256 of the approved-field object with keys sorted bytewise, NULL normalized to an empty string, strings trimmed, and CRLF/CR normalized to LF. JSON uses unescaped Unicode and slashes. All approved fields, including absent fields as NULL, are represented. Ignored/unknown fields are excluded before hashing.
@@ -45,3 +45,7 @@ The supplied export has minute-resolution timestamps and no true record ID. No a
 - A stable Cognito entry ID is the preferred future resolution. Unknown new ID headings are still ignored until explicitly approved in the mapping.
 
 The Step 2 importer uses the Stage 1 helper for locators and hashes. An unchanged locator and hash skips normalization. Changed content under a fallback locator is staged and flagged for review, without overwriting the normalized waiver.
+
+## Verified labels in the native BMA2 export — 2026-10-15
+
+StudentName_First/StudentName_Last explicitly label the student, PrintName labels the signer, and Phone/Email/structured address identify contact evidence with unresolved ownership. The derived combined student name is one signal, not independent evidence in addition to its components. Source relationship labels still require review before internal edges exist. Native entry IDs identify submissions, not students or signers. Unknown source timezone remains unresolved; AM/PM formatting supplies no timezone. Existing legacy meanings/fingerprints remain unchanged. See [cognito-import-compatibility.md](cognito-import-compatibility.md) for the complete actual mapping, encoding rules and reviewed reconciliation hold.

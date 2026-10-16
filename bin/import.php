@@ -3,11 +3,11 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/app/Import/bootstrap.php';
 
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
-$args = getopt('', ['source:','file:','dry-run','stripe-account:','stripe-live:']);
+$args = getopt('', ['source:','file:','cognito-encoding:','dry-run','stripe-account:','stripe-live:']);
 $source = $args['source'] ?? '';
 $file = $args['file'] ?? '';
 if (!is_string($source) || !is_string($file) || $file === '') {
-    fwrite(STDERR, "Usage: php bin/import.php --source=TYPE --file=FILE [--dry-run] [--stripe-account=acct_ID --stripe-live=0|1]\n"); exit(2);
+    fwrite(STDERR, "Usage: php bin/import.php --source=TYPE --file=FILE [--dry-run] [--cognito-encoding=UTF-8|Windows-1252] [--stripe-account=acct_ID --stripe-live=0|1]\n"); exit(2);
 }
 try {
     $config = bmaConfig(); $db = bmaDatabase($config);
@@ -18,6 +18,7 @@ try {
     try {
         $result = $uploads->processStream($input, fn($managed) => (new ImportService($db, $config))->run($managed, $source, basename($file), [
             'dry_run'=>isset($args['dry-run']),
+            'cognito_encoding'=>$args['cognito-encoding'] ?? 'UTF-8',
             'stripe_account_id'=>$args['stripe-account'] ?? '',
             'stripe_livemode'=>isset($args['stripe-live']) && in_array($args['stripe-live'], ['0','1'], true) ? (int)$args['stripe-live'] : null,
         ]));

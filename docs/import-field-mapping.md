@@ -105,3 +105,7 @@ Inspection: customers 14 headings / 1 populated row; subscriptions 13 / 1; trans
 - Cognito Name is stored as source_name, with unresolved meaning. Email/phone/address ownership is unresolved. No source heading or value alone creates parent/student/person relationships.
 - No fixed waiver retention period is established. The temporary-upload cleanup timeout is operational and does not define retention of normalized records.
 
+
+## Actual native Cognito export contract — 2026-10-15
+
+The original tables above describe the shelled legacy files. The 23-column BloomsburgMartialArtsAcademy2 export now uses the explicit internal cognito_waivers_bma2_v1 mapping. Sixteen approved original keys are retained separately from derived canonical Name/Address values; seven sensitive/third-party/workflow fields are ignored. Legacy mapping hashes and JSON keys remain unchanged. The complete source-column/action/destination/purpose table is in [cognito-import-compatibility.md](cognito-import-compatibility.md). Unknown columns still default to IGNORE, and only approved cells can be transcoded or serialized.

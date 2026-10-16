@@ -43,6 +43,15 @@ final class CognitoIdentity
                 return ['key'=>'civil:' . $date->format('Y-m-d H:i:s'), 'explicit'=>false, 'date'=>$date];
             }
         }
+        if (preg_match('/\A(\d{1,2})\/(\d{1,2})\/(\d{4}) (0?[1-9]|1[0-2]):([0-5]\d)(?::([0-5]\d))? (AM|PM)\z/iD', $value, $parts)
+            && checkdate((int)$parts[1], (int)$parts[2], (int)$parts[3])) {
+            $format = ($parts[6] ?? '') !== '' ? '!n/j/Y g:i:s A' : '!n/j/Y g:i A';
+            $date = DateTimeImmutable::createFromFormat($format, $value, new DateTimeZone('UTC'));
+            $errors = DateTimeImmutable::getLastErrors();
+            if ($date && ($errors === false || (!$errors['warning_count'] && !$errors['error_count']))) {
+                return ['key'=>'civil:' . $date->format('Y-m-d H:i:s'), 'explicit'=>false, 'date'=>$date];
+            }
+        }
         return null;
     }
 

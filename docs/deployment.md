@@ -131,3 +131,7 @@ Validation: **99 focused split-path checks passed** (`php tests/deployment-paths
 ## Local time display — 2026-10-10
 
 Deploy the private `src/AppTime.php` helper, updated private PHP files and public rendering/assets together as listed in [time-handling.md](time-handling.md). Optional private config/environment `APP_DISPLAY_TIMEZONE` defaults to `America/New_York`; omit it to use the default. Do not change `COGNITO_SOURCE_TIMEZONE` unless separately verified. The database session remains UTC. No migrations, data corrections or reimports are needed. No production deployment was performed.
+
+## Cognito native import compatibility — 2026-10-15
+
+The new 009 migration is required before native Cognito imports. Production may still have 008 pending: check ordered migration history and apply only approved pending 008/009 with the existing installer. Do not execute schema.sql against an existing database or overwrite live bootstrap/security fixes. Deploy the coordinated private adapter/retention/import code and the two import administration pages. No credentials, .htaccess, application display timezone or Stripe corrections change. Full backup/preflight/check/apply/verification/rollback instructions are in [cognito-import-compatibility.md](cognito-import-compatibility.md). No live deployment or historical reimport was performed.

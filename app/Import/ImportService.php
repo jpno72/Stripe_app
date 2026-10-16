@@ -14,6 +14,8 @@ final class ImportService
         $filename = basename(str_replace('\\', '/', $filename));
         if (!preg_match('/\A[^\x00-\x1f\x7f]{1,240}\.csv\z/iD', $filename)) { throw new RuntimeException('INVALID_CSV_FILENAME'); }
         $dryRun = (bool)($options['dry_run'] ?? false);
+        $encoding = $source === 'cognito_waivers' ? ($options['cognito_encoding'] ?? 'UTF-8') : 'UTF-8';
+        if (!in_array($encoding, ['UTF-8','Windows-1252'], true)) { throw new RuntimeException('INVALID_CSV_ENCODING'); }
         $namespace = (string)($this->config['COGNITO_FORM_NAMESPACE'] ?? 'bma-waiver');
         $timezone = (string)($this->config['COGNITO_SOURCE_TIMEZONE'] ?? '');
         $account = trim((string)($options['stripe_account_id'] ?? ''));
@@ -35,7 +37,8 @@ final class ImportService
         }
         unset($header);
         if (count($headers) !== count(array_unique($headers))) { throw new RuntimeException('DUPLICATE_CSV_HEADER'); }
-        $mapping = (require dirname(__DIR__, 2) . '/config/import-mappings.php')[$source];
+        $mappingKey = $source === 'cognito_waivers' ? CognitoSource::mappingKey($headers) : $source;
+        $mapping = (require dirname(__DIR__, 2) . '/config/import-mappings.php')[$mappingKey];
         $mappingHash = hash('sha256', json_encode($mapping, JSON_THROW_ON_ERROR));
         $known = array_intersect($headers, array_keys($mapping));
         if ($known === [] || ($source !== 'cognito_waivers' && !in_array('id', $headers, true))) { throw new RuntimeException('UNRECOGNIZED_CSV_HEADER'); }
@@ -49,7 +52,13 @@ final class ImportService
         try {
             $q = $this->db->prepare("SELECT id FROM import_batches WHERE source_type = ? AND file_hash = ? AND status = 'completed' AND JSON_EXTRACT(import_options, '$.dry_run') = false AND JSON_UNQUOTE(JSON_EXTRACT(import_options, '$.mapping_hash')) = ? AND JSON_UNQUOTE(JSON_EXTRACT(import_options, '$.cognito_namespace')) = ? AND source_timezone <=> ? ORDER BY id DESC LIMIT 1");
             $q->execute([$source, $fileHash, $mappingHash, $source === 'cognito_waivers' ? $namespace : '', $source === 'cognito_waivers' ? ($timezone ?: null) : null]); $duplicateOf = $q->fetchColumn() ?: null;
+            if ($duplicateOf !== null && $source === 'cognito_waivers') {
+                $q = $this->db->prepare('SELECT import_options FROM import_batches WHERE id=?'); $q->execute([$duplicateOf]);
+                $priorOptions = json_decode((string)$q->fetchColumn(), true) ?: [];
+                if (($priorOptions['input_encoding'] ?? 'UTF-8') !== $encoding) $duplicateOf = null;
+            }
             $metadata = ['dry_run'=>$dryRun, 'duplicate_of'=>$duplicateOf, 'unknown_headers'=>$unknown, 'mapping_hash'=>$mappingHash, 'cognito_namespace'=>$source === 'cognito_waivers' ? $namespace : ''];
+            if ($source === 'cognito_waivers') { $metadata['cognito_format'] = $mappingKey; $metadata['input_encoding'] = $encoding; }
             $q = $this->db->prepare('INSERT INTO import_batches (source_type, filename, file_hash, source_headers, source_timezone, import_options, status, source_stripe_account_id, source_stripe_livemode, source_identity_evidence, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
             $q->execute([$source, $filename, $fileHash, json_encode($safeHeaders, JSON_THROW_ON_ERROR), $source === 'cognito_waivers' ? ($timezone ?: null) : null,
                 json_encode($metadata, JSON_THROW_ON_ERROR), 'running', $account ?: null, $account === '' ? null : $live, $account === '' ? null : 'operator', isset($options['actor_user_id'])?(int)$options['actor_user_id']:null]);
@@ -69,14 +78,14 @@ final class ImportService
                 $rawId = null;
                 try {
                     if (count($cells) !== count($headers)) { throw new RuntimeException('INVALID_ROW'); }
-                    foreach ($cells as $cell) { if (!is_string($cell) || !mb_check_encoding($cell, 'UTF-8')) { throw new RuntimeException('INVALID_ROW'); } }
-                    $record = ApprovedRecord::fromRow($source, $headers, $cells);
+                    foreach ($cells as $cell) { if (!is_string($cell) || ($source !== 'cognito_waivers' && !mb_check_encoding($cell, 'UTF-8'))) { throw new RuntimeException('INVALID_ROW'); } }
+                    $record = ApprovedRecord::fromRow($source, $headers, $cells, $encoding);
                     // Original cell array is never passed to persistence or diagnostics.
                     unset($cells);
                     $rawId = $record->stage($this->db, $batchId, $row);
                     $v = $record->values();
                     $key = $source === 'cognito_waivers'
-                        ? CognitoIdentity::identify($record, $namespace)['source_locator']
+                        ? CognitoSource::identity($record, $namespace)['source_locator']
                         : (Normalizers::text($v['id'] ?? null) ?? '');
                     if ($source === 'cognito_waivers' && $key !== '') {
                         $this->db->prepare('UPDATE raw_cognito_waivers SET source_locator = ?, content_hash = ? WHERE id = ?')->execute([$key, $record->contentHash(), $rawId]);
@@ -104,8 +113,8 @@ final class ImportService
                     foreach (array_unique($warnings) as $warning) { ImportDiagnostics::write($this->db, $batchId, $row, $warning, $logPath); }
                 } catch (Throwable $e) {
                     if ($this->db->inTransaction()) { $this->db->rollBack(); }
-                    $code = in_array($e->getMessage(), ['INVALID_ROW','INVALID_IDENTIFIER','INVALID_AMOUNT','INVALID_DATE','INVALID_CURRENCY','INVALID_STATUS','INVALID_BOOLEAN','INVALID_COUNT','IDENTITY_AMBIGUOUS','STRIPE_REFERENCE_CONFLICT'], true) ? $e->getMessage() : 'PROCESSING_FAILED';
-                    ImportDiagnostics::write($this->db, $batchId, $row, $code, $logPath);
+                    $code = in_array($e->getMessage(), ['INVALID_ROW','INVALID_ENCODING','INVALID_IDENTIFIER','INVALID_AMOUNT','INVALID_DATE','INVALID_CURRENCY','INVALID_STATUS','INVALID_BOOLEAN','INVALID_COUNT','IDENTITY_AMBIGUOUS','STRIPE_REFERENCE_CONFLICT'], true) ? $e->getMessage() : 'PROCESSING_FAILED';
+                    ImportDiagnostics::write($this->db, $batchId, $row, $code, $logPath, 'error');
                     if ($rawId !== null) { $this->rawStatus($source, $rawId, 'error'); }
                     $counts['error_count']++;
                 }

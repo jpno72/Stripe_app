@@ -208,7 +208,7 @@ CREATE TABLE `raw_cognito_waivers` (
   CONSTRAINT `fk_raw_cognito_waivers_batch` FOREIGN KEY (`import_batch_id`) REFERENCES `import_batches` (`id`),
   CONSTRAINT `ck_raw_cognito_waivers_row` CHECK (`source_row_number` > 0),
   CONSTRAINT `ck_raw_cognito_waivers_status` CHECK (`processing_status` in ('pending','inserted','updated','skipped','error')),
-  CONSTRAINT `ck_cognito_waivers_approved` CHECK (json_type(`raw_values`) = 'OBJECT' and json_contains('["Email","Date Submitted","Name","Phone","Text Friendly","Student Birthdate","Address","Print Name","Date","Relationship to student"]',json_keys(`raw_values`)) = 1)
+  CONSTRAINT `ck_cognito_waivers_approved` CHECK (JSON_TYPE(raw_values) = 'OBJECT' AND (JSON_CONTAINS('["Email","Date Submitted","Name","Phone","Text Friendly","Student Birthdate","Address","Print Name","Date","Relationship to student"]', JSON_KEYS(raw_values)) = 1 OR JSON_CONTAINS('["BloomsburgMartialArtsAcademy2_Id","StudentName_First","StudentName_Last","Phone","TextFriendly","StudentBirthdate","Email","Address_Line1","Address_Line2","Address_City","Address_State","Address_PostalCode","PrintName","Date","RelationshipToStudent","Entry_DateSubmitted"]', JSON_KEYS(raw_values)) = 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `import_errors` (
@@ -433,6 +433,10 @@ CREATE TABLE `cognito_waivers` (
   `source_locator` varchar(100) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   `content_hash` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   `interpretation_status` varchar(20) NOT NULL DEFAULT 'unresolved',
+  `source_format` varchar(30) NOT NULL DEFAULT 'legacy',
+  `source_name_role` varchar(20) NOT NULL DEFAULT 'unresolved',
+  `source_student_first_name` varchar(255) DEFAULT NULL,
+  `source_student_last_name` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_cognito_locator` (`form_namespace`,`source_locator`),
   UNIQUE KEY `uq_cognito_record` (`form_namespace`,`source_record_id`),
@@ -449,7 +453,8 @@ CREATE TABLE `cognito_waivers` (
   CONSTRAINT `ck_waiver_text` CHECK (`text_friendly` is null or `text_friendly` in (0,1)),
   CONSTRAINT `ck_waiver_timezone` CHECK (`submitted_at` is null or `source_timezone` is not null),
   CONSTRAINT `ck_waiver_id_kind` CHECK (`source_id_kind` in ('external','fingerprint')),
-  CONSTRAINT `ck_waiver_interpretation` CHECK (`interpretation_status` in ('unresolved','verified'))
+  CONSTRAINT `ck_waiver_interpretation` CHECK (`interpretation_status` in ('unresolved','verified')),
+  CONSTRAINT `ck_waiver_source_labels` CHECK ((source_format = 'legacy' AND source_name_role = 'unresolved') OR (source_format = 'bma2_v1' AND source_name_role = 'student'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `identity_links` (
@@ -1075,3 +1080,5 @@ CREATE TABLE stripe_guest_customers (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 INSERT INTO schema_migrations (version, checksum) VALUES ('008_stripe_guest_customers', '16d47a6619761b66a526e9aee03ad81e629b093e797863af96b03f6199c30d7a');
+
+INSERT INTO schema_migrations (version, checksum) VALUES ('009_cognito_native_export', 'f4245b7dfe9d376ca71425f25406377146b3f3ef1368fd12d700bf5f3228b397');

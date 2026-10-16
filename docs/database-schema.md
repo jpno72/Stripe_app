@@ -211,3 +211,7 @@ Migration 007 adds dashboards, role_dashboard_permissions and user_dashboard_ove
 ## Dashboard guest customer groups — migration 008
 
 `stripe_guest_customers` isolates gcus_ Unified Customers export records from regular `stripe_customers`. Its persisted `record_type=dashboard_guest` and unique full source key identify a Dashboard grouping. Its only association is latest_raw_id → raw_stripe_customers → import_batches. There is no person/member/payment/subscription ownership link. Existing regular foreign keys and identity services remain unchanged. Monetary summaries remain NULL until currency is verified. See [stripe-guest-customers.md](stripe-guest-customers.md) for evidence, constraints and upgrade instructions.
+
+## Native Cognito compatibility — migration 009
+
+Migration 009 preserves the legacy raw JSON contract and adds a separate explicit native-key alternative. Four additive cognito_waivers columns preserve verified source labels: source_format, source_name_role, source_student_first_name and source_student_last_name. Existing rows default to legacy/unresolved; no source values or accepted/rejected associations are rewritten. Native submission IDs reuse the existing external-ID/namespace/locator architecture. No person/member relationship is inferred. See [cognito-import-compatibility.md](cognito-import-compatibility.md).

@@ -4,7 +4,7 @@ require_once __DIR__ . '/_common.php';
 $config = adminConfig('admin');requireDashboardAccess('imports');if(($_SERVER['REQUEST_METHOD']??'GET')!=='GET'){http_response_code(405);header('Allow: GET');exit('Read-only page.');} $db = bmaDatabase($config);
 $batch = filter_input(INPUT_GET, 'batch', FILTER_VALIDATE_INT);
 if (!$batch || $batch < 1) { http_response_code(400); exit('Invalid batch.'); }
-$q = $db->prepare('SELECT id, source_type, filename, source_headers, import_options FROM import_batches WHERE id = ?'); $q->execute([$batch]);
+$q = $db->prepare('SELECT id, source_type, filename, source_headers, source_timezone, import_options, status, row_count, inserted_count, updated_count, skipped_count, error_count FROM import_batches WHERE id = ?'); $q->execute([$batch]);
 $batchRow = $q->fetch();
 if (!$batchRow) { http_response_code(404); exit('Batch not found.'); }
 $page = filter_input(INPUT_GET, 'page', FILTER_VALIDATE_INT) ?: 1;
@@ -13,10 +13,14 @@ $q = $db->prepare('SELECT source_row_number, error_code, error_message, severity
 $errors = $q->fetchAll(); $meta = json_decode((string)$batchRow['import_options'], true) ?: [];
 $more = count($errors) > 500;
 if ($more) { array_pop($errors); }
+$summary = $db->prepare("SELECT COUNT(*) total, COALESCE(SUM(severity='warning'),0) warnings, COALESCE(SUM(severity='error'),0) errors FROM import_errors WHERE import_batch_id=?"); $summary->execute([$batch]); $diagnostics=$summary->fetch();
 adminHead('Import diagnostics');
 echo '<p><a href="imports.php">← Imports</a></p><h1>Batch ' . e($batch) . ' diagnostics</h1><p>' . e($batchRow['source_type']) . ' · ' . e($batchRow['filename']) . '</p>';
 echo '<p>Detected columns: ' . e(implode(', ', json_decode((string)$batchRow['source_headers'], true) ?: [])) . '</p>';
 if (!empty($meta['unknown_headers'])) { echo '<div class="alert alert-warning">Unknown columns ignored: ' . e(implode(', ', $meta['unknown_headers'])) . '</div>'; }
+echo '<p>Batch status: ' . e($batchRow['status']) . ' · Rows: ' . e($batchRow['row_count']) . ' · Inserted: ' . e($batchRow['inserted_count']) . ' · Updated: ' . e($batchRow['updated_count']) . ' · Skipped: ' . e($batchRow['skipped_count']) . ' · Failed rows: ' . e($batchRow['error_count']) . '</p>';
+echo '<p>Diagnostics: ' . e($diagnostics['total']) . ' (' . e($diagnostics['warnings']) . ' warnings, ' . e($diagnostics['errors']) . ' errors). Page ' . e($page) . '; up to 500 issues per page. Use Next/Previous for additional issues.</p>';
+if ($batchRow['source_type'] === 'cognito_waivers') { echo '<p>Source adapter: ' . e($meta['cognito_format'] ?? 'cognito_waivers') . ' · Encoding: ' . e($meta['input_encoding'] ?? 'UTF-8') . ' · Form namespace: ' . e($meta['cognito_namespace'] ?? '') . ' · Configured source timezone: ' . e($batchRow['source_timezone'] ?: 'Unresolved') . '</p>'; }
 echo '<table class="table table-sm"><thead><tr><th>Row</th><th>Severity</th><th>Code</th><th>Message</th><th>Time</th></tr></thead><tbody>';
 foreach ($errors as $r) { echo '<tr><td>' . e($r['source_row_number']) . '</td><td>' . e($r['severity']) . '</td><td>' . e($r['error_code']) . '</td><td>' . e($r['error_message']) . '</td><td>' . e(AppTime::display($r['created_at'])) . '</td></tr>'; }
 echo '</tbody></table>';
