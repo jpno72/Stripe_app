@@ -1,0 +1,329 @@
+diff --git a/app/Import/ImportService.php b/app/Import/ImportService.php
+index d6c41c1..600abb5 100644
+--- a/app/Import/ImportService.php
++++ b/app/Import/ImportService.php
+@@ -101,7 +101,8 @@ final class ImportService
+                         ImportDiagnostics::write($this->db, $batchId, $row, 'DUPLICATE_SOURCE_RECORD', $logPath);
+                         $this->rawStatus($source, $rawId, 'skipped'); $counts['skipped_count']++; continue;
+                     }
+-                    if ($duplicateOf !== null && !$dryRun) {
++                    if ($duplicateOf !== null && !$dryRun
++                        && !($source === 'stripe_transactions' && StripeTransactionImporter::blankId($v['id']))) {
+                         $this->rawStatus($source, $rawId, 'skipped'); $counts['skipped_count']++; continue;
+                     }
+                     $this->db->beginTransaction();
+diff --git a/app/Import/StripeTransactionImporter.php b/app/Import/StripeTransactionImporter.php
+index 1333649..b0e9580 100644
+--- a/app/Import/StripeTransactionImporter.php
++++ b/app/Import/StripeTransactionImporter.php
+@@ -6,6 +6,9 @@ final class StripeTransactionImporter extends AbstractImporter
+     public function import(PDO $db, ApprovedRecord $record, int $rawId, bool $dryRun, array $options): array
+     {
+         $v = $record->values();
++        if (self::blankId($v['id']) && self::canceledWithoutTransaction($v)) {
++            return ['skipped', ['CANCELED_WITHOUT_TRANSACTION_ID']];
++        }
+         $external = Normalizers::stripeTransactionId($v['id']);
+         $existing = $this->existing($db, 'stripe_transactions', 'stripe_charge_id', $external);
+         if ($existing && $this->sameRaw($db, $existing['latest_raw_id'] === null ? null : (int)$existing['latest_raw_id'], 'raw_stripe_transactions', $record->contentHash())) { return ['skipped', []]; }
+@@ -32,7 +35,10 @@ final class StripeTransactionImporter extends AbstractImporter
+             'captured'=>Normalizers::boolean($v['Captured']),
+             'converted_amount_minor'=>$convertedCurrency === null ? null : Normalizers::amount($v['Converted Amount'], $convertedCurrency),
+             'converted_amount_refunded_minor'=>$convertedCurrency === null ? null : Normalizers::amount($v['Converted Amount Refunded'], $convertedCurrency),
+-            'converted_currency'=>$convertedCurrency, 'fee_minor'=>null, 'fee_currency'=>null, 'taxes_on_fee_minor'=>null,
++            'converted_currency'=>$convertedCurrency,
++            // CSV fee currency is unproven. Never erase a previously verified or corrected fee.
++            'fee_minor'=>$existing['fee_minor'] ?? null, 'fee_currency'=>$existing['fee_currency'] ?? null,
++            'taxes_on_fee_minor'=>$existing['taxes_on_fee_minor'] ?? null,
+             'decline_reason'=>Normalizers::text($v['Decline Reason']), 'description'=>Normalizers::text($v['Description']),
+             'refunded_at'=>Normalizers::utc($v['Refunded date (UTC)']), 'statement_descriptor'=>Normalizers::text($v['Statement Descriptor']),
+             'status'=>$status, 'seller_message'=>Normalizers::text($v['Seller Message']),
+@@ -41,7 +47,34 @@ final class StripeTransactionImporter extends AbstractImporter
+         ];
+         if (!$dryRun) { $this->write($db, 'stripe_transactions', $values, $existing === null ? null : (int)$existing['id']); }
+         $warnings = [];
+-        if (Normalizers::text($v['Fee']) !== null || Normalizers::text($v['Taxes On Fee']) !== null || ($convertedPresent && $convertedCurrency === null)) { $warnings[] = 'CURRENCY_UNRESOLVED'; }
++        if (Normalizers::text($v['Fee']) !== null || Normalizers::text($v['Taxes On Fee']) !== null) { $warnings[] = 'FEE_CURRENCY_UNRESOLVED'; }
++        if ($convertedPresent && $convertedCurrency === null) { $warnings[] = 'CURRENCY_UNRESOLVED'; }
+         return [$this->status($existing, false, $dryRun), $warnings];
+     }
++
++    public static function blankId(?string $value): bool
++    {
++        return $value === null || preg_match('/\A[ \t\r\n\v\f]*\z/D', $value) === 1;
++    }
++
++    /** Only the verified export category: canceled, unidentified and no success/settlement evidence. */
++    private static function canceledWithoutTransaction(array $v): bool
++    {
++        if (!in_array(strtolower(Normalizers::text($v['Status']) ?? ''), ['canceled','cancelled'], true)) return false;
++        if (Normalizers::boolean($v['Captured']) === 1) return false;
++        foreach (['Fee','Taxes On Fee','Converted Currency','Converted Amount','Converted Amount Refunded','Refunded date (UTC)','Transfer'] as $key) {
++            if (Normalizers::text($v[$key]) !== null) return false;
++        }
++        $currency = Normalizers::currency($v['Currency']);
++        if ($currency === null) throw new RuntimeException('INVALID_CURRENCY');
++        $amount = Normalizers::amount($v['Amount'], $currency);
++        if ($amount === null || $amount < 0) throw new RuntimeException('INVALID_AMOUNT');
++        $refund = Normalizers::amount($v['Amount Refunded'], $currency);
++        if ($refund !== null && $refund !== 0) return false;
++        Normalizers::utc($v['Created date (UTC)']);
++        Normalizers::stripeId($v['Customer ID'], 'cus_');
++        Normalizers::stripeId($v['Invoice ID'], 'in_');
++        return true;
++    }
++
+ }
+diff --git a/src/Retention.php b/src/Retention.php
+index 95d2a95..bea7e94 100644
+--- a/src/Retention.php
++++ b/src/Retention.php
+@@ -76,6 +76,8 @@ final class ApprovedRecord
+ final class ImportDiagnostics
+ {
+     private const MESSAGES = [
++        'CANCELED_WITHOUT_TRANSACTION_ID' => 'Canceled attempt has no transaction ID or capture/settlement evidence; intentionally skipped.',
++        'FEE_CURRENCY_UNRESOLVED' => 'CSV fee currency/tax semantics are unverified; verified balance evidence is required.',
+         'CURRENCY_UNRESOLVED' => 'Source currency is unresolved; monetary normalization deferred.',
+         'TIMEZONE_UNRESOLVED' => 'Source timezone is unresolved; timestamp normalization deferred.',
+         'IDENTITY_AMBIGUOUS' => 'Submission identity needs administrative review.',
+@@ -102,7 +104,7 @@ final class ImportDiagnostics
+         if (!isset(self::MESSAGES[$code])) { throw new RuntimeException('INVALID_DIAGNOSTIC_CODE'); }
+         $q = $db->prepare('INSERT INTO import_errors (import_batch_id, source_row_number, error_code, error_message, severity) VALUES (?, ?, ?, ?, ?)');
+         if ($severity !== null && !in_array($severity, ['warning','error'], true)) throw new RuntimeException('INVALID_DIAGNOSTIC_SEVERITY');
+-        $warning = in_array($code, ['CURRENCY_UNRESOLVED','TIMEZONE_UNRESOLVED','IDENTITY_AMBIGUOUS','DUPLICATE_SOURCE_RECORD','LEGACY_RECONCILIATION_REQUIRED','WAIVER_UPDATE_REVIEW_REQUIRED','SUBMISSION_TIME_MISSING','SOURCE_TIME_AMBIGUOUS'], true);
++        $warning = in_array($code, ['CANCELED_WITHOUT_TRANSACTION_ID','FEE_CURRENCY_UNRESOLVED','CURRENCY_UNRESOLVED','TIMEZONE_UNRESOLVED','IDENTITY_AMBIGUOUS','DUPLICATE_SOURCE_RECORD','LEGACY_RECONCILIATION_REQUIRED','WAIVER_UPDATE_REVIEW_REQUIRED','SUBMISSION_TIME_MISSING','SOURCE_TIME_AMBIGUOUS'], true);
+         $q->execute([$batch, $row, $code, self::MESSAGES[$code], $severity ?? ($warning ? 'warning' : 'error')]);
+         $line = json_encode(['batch_id'=>$batch, 'row_number'=>$row, 'code'=>$code], JSON_THROW_ON_ERROR) . "\n";
+         // The structured database diagnostic is authoritative; a private log failure
+diff --git a/app/Import/BalanceFeeEvidence.php b/app/Import/BalanceFeeEvidence.php
+new file mode 100644
+--- /dev/null
++++ b/app/Import/BalanceFeeEvidence.php
+@@ -0,0 +1,72 @@
++<?php
++declare(strict_types=1);
++
++/** Verified balance evidence only. Converted Currency by itself is never fee evidence. */
++final class BalanceFeeEvidence
++{
++    public static function manifest(array $document, string $account, int $live): array
++    {
++        if (($document['stripe_account_id'] ?? null) !== $account
++            || !in_array($document['stripe_livemode'] ?? null, [true,false,0,1], true)
++            || (int)$document['stripe_livemode'] !== $live
++            || !is_array($document['balance_transactions'] ?? null)
++            || !array_is_list($document['balance_transactions']) || count($document['balance_transactions']) > 5000) {
++            throw new RuntimeException('INVALID_BALANCE_EVIDENCE');
++        }
++        $out = []; $ids = [];
++        foreach ($document['balance_transactions'] as $item) {
++            if (!is_array($item)) throw new RuntimeException('INVALID_BALANCE_EVIDENCE');
++            $proof = self::object($item);
++            if (isset($out[$proof['source']]) || isset($ids[$proof['id']])) throw new RuntimeException('INVALID_BALANCE_EVIDENCE');
++            $out[$proof['source']] = $proof; $ids[$proof['id']] = true;
++        }
++        return $out;
++    }
++
++    public static function object(array $item, bool $requirePaymentType = true): array
++    {
++        $source = $item['source'] ?? null; $id = $item['id'] ?? null;
++        if (($requirePaymentType && !in_array($item['type'] ?? null, ['charge','payment'], true))
++            || ($item['object'] ?? null) !== 'balance_transaction' || !is_string($source) || !is_string($id)
++            || Normalizers::stripeTransactionId($source) !== $source || Normalizers::stripeId($id, 'txn_', true) !== $id
++            || !is_string($item['currency'] ?? null) || !preg_match('/\A[a-z]{3}\z/D', $item['currency'])
++            || !is_int($item['amount'] ?? null) || !is_int($item['fee'] ?? null) || !is_int($item['net'] ?? null)
++            || $item['amount'] < 0 || $item['fee'] < 0 || $item['amount'] - $item['fee'] !== $item['net']) {
++            throw new RuntimeException('INVALID_BALANCE_EVIDENCE');
++        }
++        $tax = null;
++        if (array_key_exists('fee_details', $item)) {
++            if (!is_array($item['fee_details']) || !array_is_list($item['fee_details']) || count($item['fee_details']) > 100) throw new RuntimeException('INVALID_BALANCE_EVIDENCE');
++            // Some API versions return an empty breakdown despite a nonzero total. Do not invent zero tax.
++            if ($item['fee_details'] || $item['fee'] === 0) {
++                $sum = 0; $tax = 0;
++                foreach ($item['fee_details'] as $detail) {
++                    if (!is_array($detail) || !is_int($detail['amount'] ?? null) || $detail['amount'] < 0
++                        || ($detail['currency'] ?? null) !== $item['currency']
++                        || !in_array($detail['type'] ?? null, ['stripe_fee','tax','application_fee','payment_method_passthrough_fee'], true)
++                        || $sum > PHP_INT_MAX - $detail['amount']) throw new RuntimeException('INVALID_BALANCE_EVIDENCE');
++                    $sum += $detail['amount']; if ($detail['type'] === 'tax') $tax += $detail['amount'];
++                }
++                if ($sum !== $item['fee']) throw new RuntimeException('INVALID_BALANCE_EVIDENCE');
++            }
++        }
++        // No descriptions, personal metadata or complete API payloads cross into the audit/persistence layer.
++        return ['id'=>$id,'source'=>$source,'currency'=>$item['currency'],'amount'=>$item['amount'],'fee'=>$item['fee'],'net'=>$item['net'],'tax'=>$tax];
++    }
++
++    public static function stored(array $row): ?array
++    {
++        $keys = ['stripe_balance_transaction_id','balance_amount_minor','balance_fee_minor','balance_net_minor','balance_currency'];
++        $present = 0; foreach ($keys as $key) $present += $row[$key] !== null ? 1 : 0;
++        if ($present === 0) return null;
++        if ($present !== count($keys)) throw new RuntimeException('INVALID_BALANCE_EVIDENCE');
++        $integers = [];
++        foreach (['amount','fee','net'] as $key) {
++            $value = filter_var($row['balance_'.$key.'_minor'], FILTER_VALIDATE_INT);
++            if ($value === false) throw new RuntimeException('INVALID_BALANCE_EVIDENCE');
++            $integers[$key] = $value;
++        }
++        return self::object(['object'=>'balance_transaction','id'=>$row['stripe_balance_transaction_id'],
++            'source'=>$row['stripe_charge_id'],'currency'=>$row['balance_currency']] + $integers, false);
++    }
++}
+diff --git a/app/Import/TransactionFeeRepair.php b/app/Import/TransactionFeeRepair.php
+new file mode 100644
+--- /dev/null
++++ b/app/Import/TransactionFeeRepair.php
+@@ -0,0 +1,118 @@
++<?php
++declare(strict_types=1);
++require_once __DIR__.'/BalanceFeeEvidence.php';
++
++/** Batch-scoped, fee-only backfill. Never re-runs the transaction importer. */
++final class TransactionFeeRepair
++{
++    public function __construct(private PDO $db) {}
++
++    public function run(int $batch, string $fileHash, int $actor, bool $apply = false, ?array $document = null, ?string $evidenceHash = null): array
++    {
++        if ($batch < 1 || $actor < 1 || !preg_match('/\A[a-f0-9]{64}\z/D', $fileHash)
++            || ($document !== null && ($evidenceHash === null || !preg_match('/\A[a-f0-9]{64}\z/D', $evidenceHash)))
++            || $this->db->inTransaction()) throw new RuntimeException('INVALID_FEE_REPAIR_REQUEST');
++        if ((int)$this->db->query("SELECT GET_LOCK('bma_csv_import',0)")->fetchColumn() !== 1) throw new RuntimeException('IMPORT_ALREADY_RUNNING');
++        try {
++            $this->db->beginTransaction();
++            $q = $this->db->prepare("SELECT id FROM app_users WHERE id=? AND role='admin' AND is_active=1" . ($apply ? ' FOR UPDATE' : ''));
++            $q->execute([$actor]); if (!$q->fetchColumn()) throw new RuntimeException('FEE_REPAIR_ADMIN_REQUIRED');
++            $q = $this->db->prepare('SELECT * FROM import_batches WHERE id=?' . ($apply ? ' FOR UPDATE' : '')); $q->execute([$batch]); $source = $q->fetch();
++            $options = $source ? (json_decode($source['import_options'],true) ?: []) : [];
++            if (!$source || (int)$source['row_count'] > 5000 || $source['source_type'] !== 'stripe_transactions' || !in_array($source['status'],['completed','completed_with_errors'],true)
++                || ($options['dry_run'] ?? null) !== false || !hash_equals($source['file_hash'],$fileHash)) throw new RuntimeException('INVALID_FEE_REPAIR_BATCH');
++            $size = $this->db->prepare('SELECT COALESCE(SUM(OCTET_LENGTH(raw_values)),0) FROM raw_stripe_transactions WHERE import_batch_id=?');
++            $size->execute([$batch]); if ((int)$size->fetchColumn() > 16777216) throw new RuntimeException('INVALID_FEE_REPAIR_BATCH');
++            $context = $this->db->query('SELECT * FROM stripe_source_identity WHERE id=1')->fetch();
++            if (!$context || $context['stripe_account_id'] === null || $context['stripe_livemode'] === null
++                || $source['source_stripe_account_id'] !== $context['stripe_account_id'] || $source['source_stripe_livemode'] === null
++                || (int)$source['source_stripe_livemode'] !== (int)$context['stripe_livemode']) throw new RuntimeException('FEE_REPAIR_SOURCE_IDENTITY_REQUIRED');
++            $proofs = $document === null ? [] : BalanceFeeEvidence::manifest($document,$context['stripe_account_id'],(int)$context['stripe_livemode']);
++            $q = $this->db->prepare("SELECT t.id,t.stripe_charge_id,t.customer_id,t.stripe_invoice_id,t.amount_minor,t.amount_refunded_minor,t.currency,t.status,t.captured,t.stripe_created_at,
++                t.converted_amount_minor,t.converted_amount_refunded_minor,t.converted_currency,t.latest_raw_id,t.fee_minor,t.fee_currency,t.taxes_on_fee_minor,
++                t.stripe_balance_transaction_id,t.balance_amount_minor,t.balance_fee_minor,t.balance_net_minor,t.balance_currency,
++                c.stripe_customer_id linked_customer_external_id,r.raw_values,r.row_hash repair_hash,current_raw.row_hash current_hash
++                FROM stripe_transactions t JOIN raw_stripe_transactions r ON r.source_record_id=t.stripe_charge_id AND r.import_batch_id=?
++                LEFT JOIN raw_stripe_transactions current_raw ON current_raw.id=t.latest_raw_id
++                LEFT JOIN stripe_customers c ON c.id=t.customer_id
++                WHERE r.id=(SELECT MIN(x.id) FROM raw_stripe_transactions x WHERE x.import_batch_id=r.import_batch_id AND x.source_record_id=r.source_record_id)
++                ORDER BY t.id" . ($apply ? ' FOR UPDATE' : ''));
++            $q->execute([$batch]);$rows=$q->fetchAll();
++            $result=['mode'=>$apply?'apply':'dry_run','selected_count'=>count($rows),'eligible_count'=>0,'updated_count'=>0,'unchanged_count'=>0,
++                'blocked_missing_evidence'=>0,'blocked_source_drift'=>0,'blocked_balance_conflict'=>0,'blocked_existing_fee'=>0,
++                'eligible_by_currency'=>[],'intended_columns'=>['fee_minor','fee_currency','taxes_on_fee_minor_when_supported']];
++            foreach ($rows as $row) {
++                if (!$this->sourceAgrees($row)) {++$result['blocked_source_drift'];continue;}
++                try {$stored=BalanceFeeEvidence::stored($row);}catch(RuntimeException){++$result['blocked_balance_conflict'];continue;}
++                $external=$proofs[$row['stripe_charge_id']]??null;
++                if ($stored !== null && $external !== null) {
++                    foreach (['id','source','amount','fee','net','currency'] as $key) {
++                        if ($stored[$key] !== $external[$key]) {++$result['blocked_balance_conflict'];continue 2;}
++                    }
++                }
++                $proof=$external??$stored;
++                // No-op when a previously filled cache needs no new write. Never erase tax detail.
++                if ($row['fee_minor'] !== null || $row['fee_currency'] !== null || $row['taxes_on_fee_minor'] !== null) {
++                    if ($proof === null || ($row['fee_minor'] !== null && (int)$row['fee_minor']===$proof['fee'] && $row['fee_currency']===$proof['currency']
++                        && ($proof['tax']===null || ($row['taxes_on_fee_minor']!==null && (int)$row['taxes_on_fee_minor']===$proof['tax'])))) ++$result['unchanged_count'];
++                    else ++$result['blocked_existing_fee'];
++                    continue;
++                }
++                if ($proof === null) {++$result['blocked_missing_evidence'];continue;}
++                $sourceCosts=json_decode($row['raw_values'],true);
++                if ($proof['fee']===0 && (preg_match('/[1-9]/', $sourceCosts['Fee'] ?? '') || preg_match('/[1-9]/', $sourceCosts['Taxes On Fee'] ?? ''))) {
++                    // IC+ or incomplete evidence must not turn nonzero recorded costs into a factual zero.
++                    ++$result['blocked_balance_conflict'];continue;
++                }
++                $balanceAmount=$proof['currency']===$row['currency'] ? $row['amount_minor']
++                    : ($proof['currency']===$row['converted_currency'] ? $row['converted_amount_minor'] : null);
++                if ($balanceAmount===null || (int)$balanceAmount!==$proof['amount']) {++$result['blocked_balance_conflict'];continue;}
++                // Do not bind an external balance ID already attributed to another transaction.
++                $check=$this->db->prepare('SELECT id FROM stripe_transactions WHERE stripe_balance_transaction_id=? AND id<>? LIMIT 1');
++                $check->execute([$proof['id'],$row['id']]);if($check->fetchColumn()!==false){++$result['blocked_balance_conflict'];continue;}
++                ++$result['eligible_count'];$result['eligible_by_currency'][$proof['currency']]=($result['eligible_by_currency'][$proof['currency']]??0)+1;
++                if (!$apply) continue;
++                $update=$this->db->prepare('UPDATE stripe_transactions SET fee_minor=?,fee_currency=?,taxes_on_fee_minor=? WHERE id=? AND latest_raw_id=? AND fee_minor IS NULL AND fee_currency IS NULL AND taxes_on_fee_minor IS NULL');
++                $update->execute([$proof['fee'],$proof['currency'],$proof['tax'],$row['id'],$row['latest_raw_id']]);
++                if($update->rowCount()!==1)throw new RuntimeException('FEE_REPAIR_CONCURRENT_CHANGE');
++                $metadata=['reason'=>'verified_balance_fee_cache_v1','source_batch_id'=>$batch,'source_file_hash'=>$fileHash,
++                    'balance_transaction_id'=>$proof['id'],'evidence_origin'=>$external!==null?'operator_verified_stripe_balance_document':'existing_balance_fields',
++                    'evidence_sha256'=>$external!==null?$evidenceHash:null,
++                    'previous'=>['fee_minor'=>null,'fee_currency'=>null,'taxes_on_fee_minor'=>null],
++                    'new'=>['fee_minor'=>$proof['fee'],'fee_currency'=>$proof['currency'],'taxes_on_fee_minor'=>$proof['tax']]];
++                $audit=$this->db->prepare("INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES (?,'transaction_fee_repaired','stripe_transaction',?,?)");
++                $audit->execute([$actor,(string)$row['id'],json_encode($metadata,JSON_THROW_ON_ERROR)]);++$result['updated_count'];
++            }
++            ksort($result['eligible_by_currency']);
++            if($apply)$this->db->commit();else $this->db->rollBack();
++            return $result;
++        } catch(Throwable $error) {if($this->db->inTransaction())$this->db->rollBack();throw $error;}
++        finally{$this->db->query("SELECT RELEASE_LOCK('bma_csv_import')");}
++    }
++
++    private function sourceAgrees(array $row): bool
++    {
++        try {
++            if ($row['current_hash']===null || !hash_equals($row['repair_hash'],$row['current_hash'])) return false;
++            $v=json_decode($row['raw_values'],true,512,JSON_THROW_ON_ERROR);if(!is_array($v))return false;
++            $record=ApprovedRecord::fromRow('stripe_transactions',array_keys($v),array_values($v));
++            if(!hash_equals($row['repair_hash'],$record->contentHash()))return false;
++            $v=$record->values();$currency=Normalizers::currency($v['Currency']);if($currency===null)return false;
++            $converted=Normalizers::currency($v['Converted Currency']);
++            Normalizers::validateDecimal($v['Fee']);Normalizers::validateDecimal($v['Taxes On Fee']);
++            $expected=['stripe_charge_id'=>Normalizers::stripeTransactionId($v['id']),'currency'=>$currency,
++                'amount_minor'=>Normalizers::amount($v['Amount'],$currency),'amount_refunded_minor'=>Normalizers::amount($v['Amount Refunded'],$currency),
++                'status'=>Normalizers::text($v['Status']),'captured'=>Normalizers::boolean($v['Captured']),
++                'stripe_invoice_id'=>Normalizers::stripeId($v['Invoice ID'],'in_'),
++                'linked_customer_external_id'=>Normalizers::stripeId($v['Customer ID'],'cus_'),
++                'converted_currency'=>$converted,'converted_amount_minor'=>$converted===null?null:Normalizers::amount($v['Converted Amount'],$converted),
++                'converted_amount_refunded_minor'=>$converted===null?null:Normalizers::amount($v['Converted Amount Refunded'],$converted)];
++            foreach($expected as $key=>$value) {
++                if($value===null ? $row[$key]!==null : ($row[$key]===null || (string)$row[$key] !== (string)$value))return false;
++            }
++            $date=Normalizers::utc($v['Created date (UTC)']);
++            if($date===null)return $row['stripe_created_at']===null;
++            return $row['stripe_created_at']!==null && preg_match('/\A'.preg_quote($date,'/').'(?:\.0{1,6})?\z/D',$row['stripe_created_at'])===1;
++        }catch(Throwable){return false;}
++    }
++}
+diff --git a/bin/repair-transaction-fees.php b/bin/repair-transaction-fees.php
+new file mode 100644
+--- /dev/null
++++ b/bin/repair-transaction-fees.php
+@@ -0,0 +1,26 @@
++<?php
++declare(strict_types=1);
++if(PHP_SAPI!=='cli'){http_response_code(404);exit;}
++require_once dirname(__DIR__).'/app/Import/bootstrap.php';
++require_once dirname(__DIR__).'/app/Import/TransactionFeeRepair.php';
++$options=getopt('',['help','config:','batch:','file-hash:','actor-user:','balance-evidence:','confirm-stripe-evidence','dry-run','apply']);
++if(isset($options['help'])){echo "Usage: php bin/repair-transaction-fees.php --batch=ID --file-hash=SHA256 --actor-user=ADMIN_ID [--config=/private/config.php] [--balance-evidence=/private/verified-balances.json] [--dry-run | --apply] [--confirm-stripe-evidence]\nDefault: dry run. Apply with external evidence requires confirmation of its verified Stripe origin.\n";exit;}
++try{
++ if(isset($options['apply'],$options['dry-run']))throw new RuntimeException('INVALID_FEE_REPAIR_REQUEST');
++ $batch=filter_var($options['batch']??null,FILTER_VALIDATE_INT,['options'=>['min_range'=>1]]);
++ $actor=filter_var($options['actor-user']??null,FILTER_VALIDATE_INT,['options'=>['min_range'=>1]]);
++ if(!$batch||!$actor||!is_string($options['file-hash']??null))throw new RuntimeException('INVALID_FEE_REPAIR_REQUEST');
++ $config=bmaConfig(isset($options['config'])&&is_string($options['config'])?$options['config']:null);
++ $document=null;$hash=null;$apply=isset($options['apply']);
++ if(isset($options['balance-evidence'])){
++  $input=$options['balance-evidence'];$path=is_string($input)&&Paths::isAbsolute($input)?realpath($input):false;
++  if($path===false||!is_file($path)||!is_readable($path)||filesize($path)>10485760)throw new RuntimeException('INVALID_BALANCE_EVIDENCE');
++  Paths::assertPrivate($path,Paths::servedRoots($config));
++  if($apply&&!isset($options['confirm-stripe-evidence']))throw new RuntimeException('BALANCE_EVIDENCE_CONFIRMATION_REQUIRED');
++  $bytes=file_get_contents($path);if($bytes===false)throw new RuntimeException('INVALID_BALANCE_EVIDENCE');
++  $hash=hash('sha256',$bytes);$document=json_decode($bytes,true,512,JSON_THROW_ON_ERROR|JSON_BIGINT_AS_STRING);unset($bytes);
++  if(!is_array($document))throw new RuntimeException('INVALID_BALANCE_EVIDENCE');
++ }
++ $result=(new TransactionFeeRepair(bmaDatabase($config)))->run($batch,$options['file-hash'],$actor,$apply,$document,$hash);
++ echo json_encode($result,JSON_PRETTY_PRINT|JSON_THROW_ON_ERROR).PHP_EOL;
++}catch(Throwable){fwrite(STDERR,"Fee repair could not proceed. Check batch/hash, active administrator, account/environment and verified private evidence. No source contents or driver details logged.\n");exit(1);}

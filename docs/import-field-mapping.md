@@ -109,3 +109,10 @@ Inspection: customers 14 headings / 1 populated row; subscriptions 13 / 1; trans
 ## Actual native Cognito export contract — 2026-10-15
 
 The original tables above describe the shelled legacy files. The 23-column BloomsburgMartialArtsAcademy2 export now uses the explicit internal cognito_waivers_bma2_v1 mapping. Sixteen approved original keys are retained separately from derived canonical Name/Address values; seven sensitive/third-party/workflow fields are ignored. Legacy mapping hashes and JSON keys remain unchanged. The complete source-column/action/destination/purpose table is in [cognito-import-compatibility.md](cognito-import-compatibility.md). Unknown columns still default to IGNORE, and only approved cells can be transcoded or serialized.
+
+
+## Unified Payments fee evidence clarification (2026-10-31)
+
+The approved field map is unchanged. `Fee` and `Taxes On Fee` retain their exact original approved strings in staging. Their currency and tax treatment are not established by the presence of `Currency` and `Converted Currency`; they do not directly populate normalized financial fees. `FEE_CURRENCY_UNRESOLVED` identifies this specific uncertainty. A separately verified balance transaction may supply integer total fee/currency and, with a complete breakdown, a tax component, with protected audit provenance. See [repair evidence contract](stripe-payment24-import-repair.md).
+
+Blank-ID canceled attempts retain only approved staging fields and a fixed skip diagnostic. Their amounts do not create normalized transactions. No ignored/unknown field, payment method identifier or metadata value is newly allowed. Inspection of `unified_payments(24).csv` found 42 headers: the 23 standard transaction fields plus 19 ignored metadata headers. No source cell values are reproduced here.

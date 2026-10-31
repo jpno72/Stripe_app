@@ -101,7 +101,8 @@ final class ImportService
                         ImportDiagnostics::write($this->db, $batchId, $row, 'DUPLICATE_SOURCE_RECORD', $logPath);
                         $this->rawStatus($source, $rawId, 'skipped'); $counts['skipped_count']++; continue;
                     }
-                    if ($duplicateOf !== null && !$dryRun) {
+                    if ($duplicateOf !== null && !$dryRun
+                        && !($source === 'stripe_transactions' && StripeTransactionImporter::blankId($v['id']))) {
                         $this->rawStatus($source, $rawId, 'skipped'); $counts['skipped_count']++; continue;
                     }
                     $this->db->beginTransaction();

@@ -76,6 +76,8 @@ final class ApprovedRecord
 final class ImportDiagnostics
 {
     private const MESSAGES = [
+        'CANCELED_WITHOUT_TRANSACTION_ID' => 'Canceled attempt has no transaction ID or capture/settlement evidence; intentionally skipped.',
+        'FEE_CURRENCY_UNRESOLVED' => 'CSV fee currency/tax semantics are unverified; verified balance evidence is required.',
         'CURRENCY_UNRESOLVED' => 'Source currency is unresolved; monetary normalization deferred.',
         'TIMEZONE_UNRESOLVED' => 'Source timezone is unresolved; timestamp normalization deferred.',
         'IDENTITY_AMBIGUOUS' => 'Submission identity needs administrative review.',
@@ -102,7 +104,7 @@ final class ImportDiagnostics
         if (!isset(self::MESSAGES[$code])) { throw new RuntimeException('INVALID_DIAGNOSTIC_CODE'); }
         $q = $db->prepare('INSERT INTO import_errors (import_batch_id, source_row_number, error_code, error_message, severity) VALUES (?, ?, ?, ?, ?)');
         if ($severity !== null && !in_array($severity, ['warning','error'], true)) throw new RuntimeException('INVALID_DIAGNOSTIC_SEVERITY');
-        $warning = in_array($code, ['CURRENCY_UNRESOLVED','TIMEZONE_UNRESOLVED','IDENTITY_AMBIGUOUS','DUPLICATE_SOURCE_RECORD','LEGACY_RECONCILIATION_REQUIRED','WAIVER_UPDATE_REVIEW_REQUIRED','SUBMISSION_TIME_MISSING','SOURCE_TIME_AMBIGUOUS'], true);
+        $warning = in_array($code, ['CANCELED_WITHOUT_TRANSACTION_ID','FEE_CURRENCY_UNRESOLVED','CURRENCY_UNRESOLVED','TIMEZONE_UNRESOLVED','IDENTITY_AMBIGUOUS','DUPLICATE_SOURCE_RECORD','LEGACY_RECONCILIATION_REQUIRED','WAIVER_UPDATE_REVIEW_REQUIRED','SUBMISSION_TIME_MISSING','SOURCE_TIME_AMBIGUOUS'], true);
         $q->execute([$batch, $row, $code, self::MESSAGES[$code], $severity ?? ($warning ? 'warning' : 'error')]);
         $line = json_encode(['batch_id'=>$batch, 'row_number'=>$row, 'code'=>$code], JSON_THROW_ON_ERROR) . "\n";
         // The structured database diagnostic is authoritative; a private log failure
