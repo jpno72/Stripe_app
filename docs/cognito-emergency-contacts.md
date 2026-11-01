@@ -211,3 +211,8 @@ Schema: new `sql/migrations/010_cognito_emergency_contacts.sql`; updated `sql/sc
 Tests: new `tests/cognito-emergency-contacts.php`; updated `tests/cognito-compatibility.php` for the 18-key contract, migration 010 and newly approved encoding case.
 
 Documentation: this file; updates to `docs/cognito-import-compatibility.md`, `docs/cognito-field-meanings.md`, `docs/import-field-mapping.md`, `docs/imports.md`, `docs/database-schema.md`.
+
+
+## Subsequent profile display enhancement
+
+The restoration release above did not expose contact values in profiles. A later explicit approval adds role-restricted, read-only display under each accepted student-linked waiver for active admin/staff users with effective Members access. Analysts/viewers remain redacted and ordinary demographic/reporting views remain unchanged. See [member-profile.md](member-profile.md) and [profile validation/deployment](member-emergency-contact-validation.md). This display enhancement does not rerun recovery or alter the mapping, backfill, source records or migration history.

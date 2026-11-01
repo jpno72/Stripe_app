@@ -4,7 +4,7 @@ Step 10 supplies `/members/{numeric members.id}`, `/members/{BMA person ID}`, an
 
 ## Access and editing
 
-The page and paginated transaction API require an active application session. Authorized viewers can read member contact and financial data; identity details require an active application administrator. Step 11 replaced the temporary cPanel allowlist/mapping. There are no source-data editing endpoints; GET is required. Manual relationship corrections use the existing CSRF-protected, transactional, audited Matches workflow.
+The page and paginated transaction API require an active application session. Authorized viewers can read member contact and financial data; identity details require an active application administrator. The effective Members dashboard permission is required for every profile; emergency contacts additionally require a canonical admin or staff role. Step 11 replaced the temporary cPanel allowlist/mapping. There are no source-data editing endpoints; GET is required. Manual relationship corrections use the existing CSRF-protected, transactional, audited Matches workflow.
 
 ## Sources and financial scope
 
@@ -18,8 +18,19 @@ Amounts are currency minor units, not major-unit dollars. Currencies are never s
 
 ## Waiver privacy
 
-Latest 50 waivers require an accepted student link. Reviewed signer identities and source printed signer text are distinguished. Relationship text is labelled source information; it does not create relationships. Unresolved source timezone or interpretation stays unresolved. Goals, medical and special-consideration fields are excluded by the approved retention mapping; the page displays unavailable states and a separate sensitive-data section. It never reads staging JSON, birth dates, medical values or excluded fields. Latest 100 identity links are visible only to mapped administrators; review evidence and free-form notes are not dumped into this page.
+Latest 50 waivers require an accepted student link. Reviewed signer identities and source printed signer text are distinguished. Relationship text is labelled source information; it does not create relationships. Unresolved source timezone or interpretation stays unresolved. Goals, medical and special-consideration fields are excluded by the approved retention mapping; the page displays unavailable states and a separate sensitive-data section. It never reads staging JSON, birth dates, medical values or excluded fields. Latest 100 identity links are visible only to authenticated application administrators; review evidence and free-form notes are not dumped into this page.
 
 ## Implementation and validation
 
 `MemberProfileRepository` queries views and normalized associations; `MemberProfileService` owns financial attribution and source selection. Shared layout/components, Bootstrap, Chart.js and server-paged DataTables provide presentation. No schema migration or authentication implementation was required. `tests/member-profile.php` requires a disposable test database and rolls back temporary scenarios. See `step10-validation.md`.
+
+
+## Emergency contacts — 2026-11-01
+
+Each accepted student-linked waiver now has its own read-only Emergency Contact subsection for authorized **admin/staff** users. Name and phone are escaped exactly as stored, including telephone formatting/extensions. An absent individual field shows “Not provided.”; two absent fields show “No emergency contact information provided.” No contact is selected as authoritative across waivers, and no parent/guardian/payer relationship is inferred. Members without accepted waivers retain the existing empty state.
+
+`MemberProfileRepository::waivers` defaults to the original redacted projection. Only a server-provided access configuration requests emergency data; the repository independently resolves `SessionCurrentUserProvider` and checks the canonical admin/staff role plus `DashboardPermissionService::canViewDashboard(..., 'members')` **before selecting the two columns**. Analyst/viewer, inactive, unauthenticated, Members-denied or Members-disabled users never retrieve those values. Staff emergency access does not grant administrator-only identity review or Matches access. Role and override settings are not changed.
+
+A conservative `tel:` helper accepts ordinary digits, formatting and a numeric extension, constructs a digits-only dialing URI with optional `;ext=`, and leaves the displayed source text untouched. Invalid/ambiguous phone values remain safely escaped plain text. No emergency data is added to JSON, hidden fields, scripts, APIs, audit, logs or telemetry. The page sets `Cache-Control: private, no-store` after session startup, so PHP's session cache limiter cannot replace the final privacy header.
+
+No schema migration, import or backfill is included or executed. Existing migration 010 columns are prerequisites. See [emergency profile validation and deployment](member-emergency-contact-validation.md) for tests, exact commands and the controlled cPanel file list.

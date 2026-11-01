@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-require dirname(__DIR__).'/src/database.php';require dirname(__DIR__).'/app/Members/MemberProfileService.php';require dirname(__DIR__).'/app/Members/MemberProfileAccess.php';
+require dirname(__DIR__).'/src/database.php';require dirname(__DIR__).'/app/Members/MemberProfileService.php';require_once dirname(__DIR__).'/app/Members/MemberProfileAccess.php';
 $config=bmaConfig();if(($config['APP_ENV']??'')!=='test'||!str_starts_with((string)$config['DB_DATABASE'],'bma_schema_test_'))throw new RuntimeException('Disposable database required.');$db=bmaDatabase($config);$repo=new MemberProfileRepository($db);$service=new MemberProfileService($repo);$checks=0;
 function profileCheck(bool $ok,string $label):void{global $checks;if(!$ok)throw new RuntimeException('FAIL '.$label);++$checks;echo 'PASS '.$label.PHP_EOL;}
 $members=$db->query('SELECT member_id,bma_person_id,person_id FROM vw_member_summary')->fetchAll();

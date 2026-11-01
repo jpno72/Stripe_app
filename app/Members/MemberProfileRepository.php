@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/MemberProfileIdentifier.php';
+require_once __DIR__.'/MemberProfileAccess.php';
 require_once dirname(__DIR__, 2).'/src/AppTime.php';
 final class MemberProfileRepository
 {
@@ -31,11 +32,14 @@ final class MemberProfileRepository
           FROM vw_subscription_summary s WHERE EXISTS(SELECT 1 FROM subscription_members map WHERE map.subscription_id=s.subscription_id AND map.member_id=?) ORDER BY s.subscription_id DESC LIMIT 100",[$member,$member]);
         foreach($rows as &$row){$row['items']=$this->rows('SELECT product_name,stripe_price_id,amount_minor,amount_basis,quantity,currency,billing_interval,billing_interval_count,monthly_equivalent_minor FROM vw_subscription_item_rates WHERE subscription_id=? ORDER BY subscription_item_id',[$row['subscription_id']]);}unset($row);return $rows;
     }
-    public function waivers(int $person): array
+    public function waivers(int $person,?array $emergencyAccessConfig=null): array
     {
+        // No sensitive columns are selected unless the current session and canonical permissions allow it.
+        $emergency=$emergencyAccessConfig!==null && MemberProfileAccess::canViewEmergencyContacts($this->db,$emergencyAccessConfig)
+            ? ',w.emergency_contact_name,w.emergency_contact_phone' : '';
         return $this->rows("SELECT w.source_record_id,w.source_id_kind,w.form_namespace,w.source_locator,COALESCE(JSON_UNQUOTE(JSON_EXTRACT(raw.raw_values, '$.\"Date Submitted\"')),JSON_UNQUOTE(JSON_EXTRACT(raw.raw_values, '$.Entry_DateSubmitted'))) original_submitted_at,w.submitted_at,w.source_timezone,w.signed_date,w.signer_print_name,w.relationship_to_student,w.interpretation_status,
           TRIM(CONCAT_WS(' ',signer.first_name,signer.middle_name,signer.last_name)) signer_name,signer.bma_person_id signer_bma,
-          student_link.match_status student_link_status,signer_link.match_status signer_link_status
+          student_link.match_status student_link_status,signer_link.match_status signer_link_status$emergency
           FROM cognito_waivers w LEFT JOIN raw_cognito_waivers raw ON raw.id=w.latest_raw_id JOIN identity_links student_link ON student_link.source_system='cognito' AND student_link.source_type='waiver' AND student_link.source_role='student' AND student_link.external_id=w.source_locator AND student_link.match_status IN ('automatic','confirmed')
           LEFT JOIN identity_links signer_link ON signer_link.source_system='cognito' AND signer_link.source_type='waiver' AND signer_link.source_role='signer' AND signer_link.external_id=w.source_locator AND signer_link.match_status IN ('automatic','confirmed')
           LEFT JOIN people signer ON signer.id=signer_link.person_id WHERE student_link.person_id=? ORDER BY w.submitted_at DESC,w.id DESC LIMIT 50",[$person]);
