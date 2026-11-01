@@ -208,7 +208,7 @@ CREATE TABLE `raw_cognito_waivers` (
   CONSTRAINT `fk_raw_cognito_waivers_batch` FOREIGN KEY (`import_batch_id`) REFERENCES `import_batches` (`id`),
   CONSTRAINT `ck_raw_cognito_waivers_row` CHECK (`source_row_number` > 0),
   CONSTRAINT `ck_raw_cognito_waivers_status` CHECK (`processing_status` in ('pending','inserted','updated','skipped','error')),
-  CONSTRAINT `ck_cognito_waivers_approved` CHECK (JSON_TYPE(raw_values) = 'OBJECT' AND (JSON_CONTAINS('["Email","Date Submitted","Name","Phone","Text Friendly","Student Birthdate","Address","Print Name","Date","Relationship to student"]', JSON_KEYS(raw_values)) = 1 OR JSON_CONTAINS('["BloomsburgMartialArtsAcademy2_Id","StudentName_First","StudentName_Last","Phone","TextFriendly","StudentBirthdate","Email","Address_Line1","Address_Line2","Address_City","Address_State","Address_PostalCode","PrintName","Date","RelationshipToStudent","Entry_DateSubmitted"]', JSON_KEYS(raw_values)) = 1))
+  CONSTRAINT `ck_cognito_waivers_approved` CHECK (JSON_TYPE(raw_values) = 'OBJECT' AND (JSON_CONTAINS('["Email","Date Submitted","Name","Phone","Text Friendly","Student Birthdate","Address","Print Name","Date","Relationship to student"]', JSON_KEYS(raw_values)) = 1 OR JSON_CONTAINS('["BloomsburgMartialArtsAcademy2_Id","StudentName_First","StudentName_Last","Phone","TextFriendly","StudentBirthdate","Email","Address_Line1","Address_Line2","Address_City","Address_State","Address_PostalCode","PrintName","Date","RelationshipToStudent","Entry_DateSubmitted","EmergencyContact","Phone2"]', JSON_KEYS(raw_values)) = 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `import_errors` (
@@ -437,6 +437,8 @@ CREATE TABLE `cognito_waivers` (
   `source_name_role` varchar(20) NOT NULL DEFAULT 'unresolved',
   `source_student_first_name` varchar(255) DEFAULT NULL,
   `source_student_last_name` varchar(255) DEFAULT NULL,
+  `emergency_contact_name` varchar(255) DEFAULT NULL,
+  `emergency_contact_phone` varchar(100) DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_cognito_locator` (`form_namespace`,`source_locator`),
   UNIQUE KEY `uq_cognito_record` (`form_namespace`,`source_record_id`),
@@ -1082,3 +1084,5 @@ CREATE TABLE stripe_guest_customers (
 INSERT INTO schema_migrations (version, checksum) VALUES ('008_stripe_guest_customers', '16d47a6619761b66a526e9aee03ad81e629b093e797863af96b03f6199c30d7a');
 
 INSERT INTO schema_migrations (version, checksum) VALUES ('009_cognito_native_export', 'f4245b7dfe9d376ca71425f25406377146b3f3ef1368fd12d700bf5f3228b397');
+
+INSERT INTO schema_migrations (version, checksum) VALUES ('010_cognito_emergency_contacts', 'b5c6ccd989a4df7f8764388e07d4aa2ae9a5cced01cc24d5a216c8fae007303d');

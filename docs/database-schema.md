@@ -96,7 +96,7 @@ Unknown column names may be retained as header metadata; unknown cell values may
 
 Customer Description and Card ID from the customer export, Customer Description from subscription and transaction exports, and Card ID from transactions are IGNORE. The corresponding normalized columns are absent. Transaction Description remains approved because its observed "Subscription update" value can help classify and reconcile a payment; it must still be treated as sensitive free text.
 
-Cognito considerations, goals, Emergency Contact, and Emergency contact Phone are IGNORE. The corresponding normalized columns are absent. Retaining them later requires an explicit BMA decision and a mapping/schema/access review. No fixed waiver-data retention period has been selected.
+Cognito medical considerations and goals remain IGNORE. Legacy Emergency Contact/Emergency contact Phone headings also remain ignored. The explicitly approved native EmergencyContact/Phone2 fields now populate nullable emergency_contact_name VARCHAR(255) and emergency_contact_phone VARCHAR(100) after migration 010; they are third-party emergency data, excluded from identity matching and ordinary reports. No fixed waiver-data retention period has been selected.
 
 ## BMA identity allocation and immutability
 
@@ -215,3 +215,8 @@ Migration 007 adds dashboards, role_dashboard_permissions and user_dashboard_ove
 ## Native Cognito compatibility — migration 009
 
 Migration 009 preserves the legacy raw JSON contract and adds a separate explicit native-key alternative. Four additive cognito_waivers columns preserve verified source labels: source_format, source_name_role, source_student_first_name and source_student_last_name. Existing rows default to legacy/unresolved; no source values or accepted/rejected associations are rewritten. Native submission IDs reuse the existing external-ID/namespace/locator architecture. No person/member relationship is inferred. See [cognito-import-compatibility.md](cognito-import-compatibility.md).
+
+
+## Native emergency contacts — migration 010
+
+[010_cognito_emergency_contacts.sql](../sql/migrations/010_cognito_emergency_contacts.sql) adds two nullable VARCHAR columns and extends only the native alternative of `ck_cognito_waivers_approved`. Legacy raw keys, indexes, foreign keys, identity triggers, existing records and migrations 001–009 remain unchanged. The consolidated schema includes the same additions and migration checksum for future empty installations; never apply schema.sql to production. No new relationships/person associations are created. Historical contacts require the [audited private backfill](cognito-emergency-contacts.md), not a hash rewrite or schema rebuild.

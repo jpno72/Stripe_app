@@ -49,3 +49,8 @@ The Step 2 importer uses the Stage 1 helper for locators and hashes. An unchange
 ## Verified labels in the native BMA2 export — 2026-10-15
 
 StudentName_First/StudentName_Last explicitly label the student, PrintName labels the signer, and Phone/Email/structured address identify contact evidence with unresolved ownership. The derived combined student name is one signal, not independent evidence in addition to its components. Source relationship labels still require review before internal edges exist. Native entry IDs identify submissions, not students or signers. Unknown source timezone remains unresolved; AM/PM formatting supplies no timezone. Existing legacy meanings/fingerprints remain unchanged. See [cognito-import-compatibility.md](cognito-import-compatibility.md) for the complete actual mapping, encoding rules and reviewed reconciliation hold.
+
+
+## Native emergency contacts — approved 2026-11-01
+
+Only native BMA2 `EmergencyContact` and `Phone2` mean emergency contact name/phone. They do not identify the student, signer, parent, guardian or payer and do not prove any relationship. They are optional, sensitive third-party contact data. Preserve phone formatting/extensions; leave missing fields NULL. The legacy emergency headings above remain ignored. No new profile/report exposure is introduced. [Migration 010 and the recovery CLI](cognito-emergency-contacts.md) recover these fields without rewriting identity evidence or guessing the still-unresolved source timezone.

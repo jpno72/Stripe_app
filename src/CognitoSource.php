@@ -40,6 +40,31 @@ final class CognitoSource
             'Student Birthdate'=>$v['StudentBirthdate'], 'Address'=>$address ? implode(', ', $address) : null,
             'Date'=>$v['Date'], 'Relationship to student'=>$v['RelationshipToStudent']];
     }
+    /** Emergency data is deliberately separate from canonical student/signer matching inputs. */
+    public static function emergencyContacts(ApprovedRecord $record): array
+    {
+        if (!self::native($record)) throw new RuntimeException('INVALID_EMERGENCY_SOURCE');
+        $v = $record->values(); $out = [];
+        foreach (['EmergencyContact'=>['emergency_contact_name',255], 'Phone2'=>['emergency_contact_phone',100]] as $key=>$target) {
+            $value = $v[$key] ?? null;
+            $value = $value === null ? null : trim($value);
+            if ($value === '') $value = null;
+            if ($value !== null && (mb_strlen($value,'UTF-8') > $target[1] || preg_match('/[\x00-\x1f\x7f]/u',$value))) throw new RuntimeException('INVALID_EMERGENCY_CONTACT');
+            $out[$target[0]] = $value;
+        }
+        return $out;
+    }
+
+    /** Exact pre-010 approved hash, for recognizing unchanged historical evidence only. */
+    public static function preEmergencyContentHash(ApprovedRecord $record): string
+    {
+        if (!self::native($record)) throw new RuntimeException('INVALID_EMERGENCY_SOURCE');
+        $v = $record->values(); unset($v['EmergencyContact'],$v['Phone2']);
+        $canonical = [];
+        foreach ($v as $key=>$value) $canonical[$key] = $value === null ? '' : trim(str_replace(["\r\n","\r"],"\n",$value));
+        return hash('sha256',json_encode((object)$canonical,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
+    }
+
     public static function text(?string $value, string $encoding): ?string
     {
         if ($value === null) return null;

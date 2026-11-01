@@ -1,6 +1,8 @@
 # Cognito native export compatibility
 
-## Completed correction — 2026-10-15
+## Original correction — 2026-10-15
+
+Current emergency-contact restoration is documented in [cognito-emergency-contacts.md](cognito-emergency-contacts.md). The original encoding inspection below used the former 16-field whitelist; the current 18-field whitelist finds five, rather than four, rows requiring Windows-1252 decoding.
 
 The source file `BloomsburgMartialArtsAcademy2(7).csv` uses internal form-field headers, a native submission ID, 12-hour AM/PM clocks and Windows-1252 text. The old importer expected the separate legacy shelled format and validated every source cell as UTF-8 before filtering; it therefore lost required identity evidence and rejected some records based on bytes in fields that should be excluded.
 
@@ -8,7 +10,7 @@ Source inspection found 1,074 records, 23 columns, no width errors, 1,074 nonbla
 
 ## Exact field contract
 
-The new internal `cognito_waivers_bma2_v1` mapping is selected by explicit headers, not fuzzy header guessing. Its five structural headers (native ID, StudentName_First, StudentName_Last, PrintName, Entry_DateSubmitted) must be present. Mixed native/legacy aliases fail preflight. All 16 approved original native keys/cells are retained in raw_cognito_waivers.raw_values; no generated combined Name or Address is written into native raw JSON. Ignored values never enter raw JSON, normalized records, matching, diagnostic messages or logs. Unknown columns default to ignored; their header names are safe metadata only.
+The new internal `cognito_waivers_bma2_v1` mapping is selected by explicit headers, not fuzzy header guessing. Its five structural headers (native ID, StudentName_First, StudentName_Last, PrintName, Entry_DateSubmitted) must be present. Mixed native/legacy aliases fail preflight. After migration 010, all 18 approved original native keys/cells are retained in raw_cognito_waivers.raw_values; no generated combined Name or Address is written into native raw JSON. Ignored values never enter raw JSON, normalized records, matching, diagnostic messages or logs. Unknown columns default to ignored; their header names are safe metadata only.
 
 | Source column | Handling | Destination / purpose |
 |---|---|---|
@@ -28,8 +30,8 @@ The new internal `cognito_waivers_bma2_v1` mapping is selected by explicit heade
 | `Date` | IMPORT | cognito_waivers.signed_date — Source calendar signing date |
 | `RelationshipToStudent` | IMPORT | cognito_waivers.relationship_to_student — Source relationship claim; no automatic edges |
 | `Entry_DateSubmitted` | IMPORT | cognito_waivers.submitted_at — Original submission clock value; source timezone separate |
-| `EmergencyContact` | IGNORE | Excluded everywhere — Excluded: Unnecessary third-party contact |
-| `Phone2` | IGNORE | Excluded everywhere — Excluded: Emergency-contact phone |
+| `EmergencyContact` | OPTIONAL | cognito_waivers.emergency_contact_name — Emergency contact only; no identity scoring or value logging |
+| `Phone2` | OPTIONAL | cognito_waivers.emergency_contact_phone — Preserve formatting/extensions; no identity scoring or value logging |
 | `Considerations` | IGNORE | Excluded everywhere — Excluded: Medical or special-consideration information |
 | `Goals` | IGNORE | Excluded everywhere — Excluded: Sensitive free-form interests |
 | `Entry_Status` | IGNORE | Excluded everywhere — Excluded: Workflow status has no reporting purpose |
@@ -178,3 +180,10 @@ The remaining production decisions are verification of source timezone and any r
 - `docs/imports.md`
 - `docs/database-schema.md`
 - `docs/deployment.md`
+
+
+## Migration 010 and historical evidence
+
+The emergency restoration adds only two nullable columns and permits two native raw keys; legacy keys and migrations 001–009 are unchanged. Existing historical waivers are not automatically re-normalized just because the approved field set changes. An exact projection onto the pre-010 16-field hash detects the original content and emits `EMERGENCY_CONTACT_BACKFILL_REQUIRED`; neither the original raw row nor the normalized content hash/latest raw pointer is replaced. New import attempts have their own mapping hash and approved raw snapshot. Repeated identical new-contract uploads use the normal batch duplicate guard.
+
+Use the separate original-file/batch-scoped CLI to recover contacts, including linked/verified waivers, without changing their identity interpretation or evidence. Existing non-NULL contacts cannot be silently replaced or cleared. See [the deployment and backfill procedure](cognito-emergency-contacts.md). Original test counts and deployment instructions above describe the earlier migration 009 release, not a command to reapply it. Migration 010 must precede activating the expanded native mapping.

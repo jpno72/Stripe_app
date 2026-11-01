@@ -7,6 +7,7 @@ final class CognitoWaiverImporter extends AbstractImporter
     {
         $v = CognitoSource::canonical($record);
         $native = CognitoSource::native($record);
+        $emergency = $native ? CognitoSource::emergencyContacts($record) : [];
         $identity = CognitoSource::identity($record, $options['cognito_namespace']);
         $q = $db->prepare('UPDATE raw_cognito_waivers SET source_locator = ?, content_hash = ? WHERE id = ?');
         $q->execute([$identity['source_locator'], $identity['content_hash'], $rawId]);
@@ -18,6 +19,15 @@ final class CognitoWaiverImporter extends AbstractImporter
         $birth = Normalizers::date($v['Student Birthdate']);
         $signed = Normalizers::date($v['Date']);
         $textFriendly = Normalizers::boolean($v['Text Friendly']);
+        // New approvals change the full hash. Never rewrite pre-010 evidence just to add contacts.
+        if ($native && $existing && hash_equals($existing['content_hash'], CognitoSource::preEmergencyContentHash($record))) {
+            return ['skipped', ['EMERGENCY_CONTACT_BACKFILL_REQUIRED']];
+        }
+        if ($native && $existing) {
+            foreach ($emergency as $key=>$value) {
+                if ($existing[$key] !== null && $existing[$key] !== $value) return ['skipped', ['WAIVER_UPDATE_REVIEW_REQUIRED']];
+            }
+        }
         // A fallback locator is not a true submission ID. Changed content needs review.
         if ($existing && $identity['source_id_kind'] === 'fingerprint') { return ['skipped', ['IDENTITY_AMBIGUOUS']]; }
         if ($native && !$existing) {
@@ -46,6 +56,7 @@ final class CognitoWaiverImporter extends AbstractImporter
             'latest_raw_id'=>$rawId, 'interpretation_status'=>'unresolved'];
         if ($native) {
             $raw = $record->values();
+            $values += $emergency;
             $values['source_format'] = 'bma2_v1';
             $values['source_name_role'] = 'student';
             $values['source_student_first_name'] = Normalizers::text($raw['StudentName_First']);

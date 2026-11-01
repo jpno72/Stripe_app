@@ -101,14 +101,14 @@ Inspection: customers 14 headings / 1 populated row; subscriptions 13 / 1; trans
 - Changing a whitelist requires both a reviewed mapping change and a migration updating the corresponding database JSON-key CHECK. Tests exercise both layers.
 - Stripe descriptions and diagnostic messages are explicitly approved as source snapshots but never logged or used for identity scoring. Their contents must be escaped when displayed.
 - Stripe Card ID in customer and transaction exports, customer Description in the customer export, and Customer Description in subscription and transaction exports are IGNORE. Their values have no documented reporting purpose and are excluded from normalized and staging tables.
-- Cognito considerations, goals, Emergency Contact, and Emergency contact Phone are IGNORE by default. Their normalized columns were removed. Enabling any later requires an explicit BMA decision, schema/mapping changes, role controls, and review of reporting exposure.
+- Cognito considerations/goals and legacy Emergency Contact/Emergency contact Phone headings remain IGNORE. After explicit approval in migration 010, only native EmergencyContact and Phone2 are OPTIONAL emergency data; no identity scoring or value logging. They remain absent from ordinary reporting projections.
 - Cognito Name is stored as source_name, with unresolved meaning. Email/phone/address ownership is unresolved. No source heading or value alone creates parent/student/person relationships.
 - No fixed waiver retention period is established. The temporary-upload cleanup timeout is operational and does not define retention of normalized records.
 
 
 ## Actual native Cognito export contract — 2026-10-15
 
-The original tables above describe the shelled legacy files. The 23-column BloomsburgMartialArtsAcademy2 export now uses the explicit internal cognito_waivers_bma2_v1 mapping. Sixteen approved original keys are retained separately from derived canonical Name/Address values; seven sensitive/third-party/workflow fields are ignored. Legacy mapping hashes and JSON keys remain unchanged. The complete source-column/action/destination/purpose table is in [cognito-import-compatibility.md](cognito-import-compatibility.md). Unknown columns still default to IGNORE, and only approved cells can be transcoded or serialized.
+The original tables above describe the shelled legacy files. The 23-column BloomsburgMartialArtsAcademy2 export now uses the explicit internal cognito_waivers_bma2_v1 mapping. After migration 010, eighteen approved original keys are retained separately from derived canonical Name/Address values; five medical/free-form/workflow fields remain ignored. Legacy mapping hashes and JSON keys remain unchanged. The complete source-column/action/destination/purpose table is in [cognito-import-compatibility.md](cognito-import-compatibility.md). Unknown columns still default to IGNORE, and only approved cells can be transcoded or serialized.
 
 
 ## Unified Payments fee evidence clarification (2026-10-31)
@@ -116,3 +116,13 @@ The original tables above describe the shelled legacy files. The 23-column Bloom
 The approved field map is unchanged. `Fee` and `Taxes On Fee` retain their exact original approved strings in staging. Their currency and tax treatment are not established by the presence of `Currency` and `Converted Currency`; they do not directly populate normalized financial fees. `FEE_CURRENCY_UNRESOLVED` identifies this specific uncertainty. A separately verified balance transaction may supply integer total fee/currency and, with a complete breakdown, a tax component, with protected audit provenance. See [repair evidence contract](stripe-payment24-import-repair.md).
 
 Blank-ID canceled attempts retain only approved staging fields and a fixed skip diagnostic. Their amounts do not create normalized transactions. No ignored/unknown field, payment method identifier or metadata value is newly allowed. Inspection of `unified_payments(24).csv` found 42 headers: the 23 standard transaction fields plus 19 ignored metadata headers. No source cell values are reproduced here.
+
+
+## Native emergency field approval — 2026-11-01
+
+| Native source field | Action | Normalized destination | Purpose | Sensitive | Identity scoring | Log value |
+|---|---|---|---|---|---|---|
+| EmergencyContact | OPTIONAL | cognito_waivers.emergency_contact_name VARCHAR(255) NULL | Emergency contact name only | Yes | No | No |
+| Phone2 | OPTIONAL | cognito_waivers.emergency_contact_phone VARCHAR(100) NULL | Emergency phone, formatting/extensions preserved | Yes | No | No |
+
+New raw snapshots retain the exact approved UTF-8 source strings after lossless Windows-1252 conversion; normalized contacts trim outer whitespace and map blanks to NULL. Overlength or control-character contact text is rejected, never truncated. Neither field enters canonical student/signer identity inputs, person/member creation, relationships, demographic charts, search or match scoring. No other native/legacy key is newly approved. Historical raw snapshots remain unchanged; see [recovery and compatibility rules](cognito-emergency-contacts.md).
