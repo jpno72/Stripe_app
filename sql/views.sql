@@ -56,7 +56,7 @@ SELECT x.subscription_item_id, x.subscription_id, x.stripe_subscription_item_id,
        x.stripe_price_id, x.stripe_product_id, x.product_name,
        x.amount_minor, x.amount_basis, x.quantity, x.currency,
        x.billing_interval, x.billing_interval_count,
-       CASE WHEN x.amount_minor IS NULL OR x.currency IS NULL OR x.billing_interval_count IS NULL
+       CASE WHEN x.amount_basis = 'csv_unresolved' OR x.amount_minor IS NULL OR x.currency IS NULL OR x.billing_interval_count IS NULL
                  OR x.billing_interval_count = 0 OR (x.amount_basis = 'unit' AND x.quantity IS NULL)
                  OR x.currency_conflict = 1 THEN NULL
             WHEN x.billing_interval = 'month' THEN ROUND(CAST(x.amount_minor AS DECIMAL(28,4)) * x.effective_quantity / x.billing_interval_count, 4)
@@ -67,8 +67,8 @@ SELECT x.subscription_item_id, x.subscription_id, x.stripe_subscription_item_id,
             ELSE NULL END AS monthly_equivalent_minor
 FROM (
     SELECT i.id AS subscription_item_id, i.subscription_id, i.stripe_subscription_item_id,
-           p.stripe_price_id, pr.stripe_product_id,
-           COALESCE(NULLIF(i.product_name_snapshot, ''), pr.name) AS product_name,
+           p.stripe_price_id, COALESCE(pr.stripe_product_id, csv_product.stripe_product_id) AS stripe_product_id,
+           COALESCE(NULLIF(i.product_name_snapshot, ''), pr.name, csv_product.name) AS product_name,
            i.amount_minor, i.amount_basis, i.quantity,
            CASE WHEN i.currency IS NOT NULL AND p.currency IS NOT NULL AND i.currency <> p.currency
                 THEN NULL ELSE COALESCE(i.currency, p.currency) END AS currency,
@@ -83,6 +83,7 @@ FROM (
     FROM stripe_subscription_items i
     LEFT JOIN stripe_prices p ON p.id = i.price_id
     LEFT JOIN stripe_products pr ON pr.id = p.product_id
+    LEFT JOIN stripe_products csv_product ON csv_product.id = i.product_id
 ) x;
 
 CREATE OR REPLACE SQL SECURITY INVOKER VIEW vw_subscription_summary AS

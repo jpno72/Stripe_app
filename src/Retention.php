@@ -76,6 +76,13 @@ final class ApprovedRecord
 final class ImportDiagnostics
 {
     private const MESSAGES = [
+        'SUBSCRIPTION_GROUP_CONFLICT' => 'Subscription rows are inconsistent or incomplete; no normalized group changes applied.',
+        'SUBSCRIPTION_ITEM_AMBIGUOUS' => 'Item identity has conflicting source rows; no normalized group changes applied.',
+        'SUBSCRIPTION_REVIEW_REQUIRED' => 'Changed or protected subscription evidence requires review; source freshness is not established.',
+        'SUBSCRIPTION_ITEM_SET_REVIEW_REQUIRED' => 'An existing item is omitted or cannot be identified safely; reviewed reconciliation is required.',
+        'SUBSCRIPTION_AMOUNT_UNRESOLVED' => 'Source amount is retained without assuming per-unit or whole-item semantics; recurring revenue is unresolved.',
+        'DUPLICATE_SUBSCRIPTION_ITEM' => 'Identical approved subscription-item row repeated; duplicate skipped.',
+
         'EMERGENCY_CONTACT_BACKFILL_REQUIRED' => 'Historical native evidence is unchanged; use the audited emergency-contact backfill.',
         'CANCELED_WITHOUT_TRANSACTION_ID' => 'Canceled attempt has no transaction ID or capture/settlement evidence; intentionally skipped.',
         'FEE_CURRENCY_UNRESOLVED' => 'CSV fee currency/tax semantics are unverified; verified balance evidence is required.',
@@ -105,7 +112,7 @@ final class ImportDiagnostics
         if (!isset(self::MESSAGES[$code])) { throw new RuntimeException('INVALID_DIAGNOSTIC_CODE'); }
         $q = $db->prepare('INSERT INTO import_errors (import_batch_id, source_row_number, error_code, error_message, severity) VALUES (?, ?, ?, ?, ?)');
         if ($severity !== null && !in_array($severity, ['warning','error'], true)) throw new RuntimeException('INVALID_DIAGNOSTIC_SEVERITY');
-        $warning = in_array($code, ['EMERGENCY_CONTACT_BACKFILL_REQUIRED','CANCELED_WITHOUT_TRANSACTION_ID','FEE_CURRENCY_UNRESOLVED','CURRENCY_UNRESOLVED','TIMEZONE_UNRESOLVED','IDENTITY_AMBIGUOUS','DUPLICATE_SOURCE_RECORD','LEGACY_RECONCILIATION_REQUIRED','WAIVER_UPDATE_REVIEW_REQUIRED','SUBMISSION_TIME_MISSING','SOURCE_TIME_AMBIGUOUS'], true);
+        $warning = in_array($code, ['SUBSCRIPTION_AMOUNT_UNRESOLVED','DUPLICATE_SUBSCRIPTION_ITEM','EMERGENCY_CONTACT_BACKFILL_REQUIRED','CANCELED_WITHOUT_TRANSACTION_ID','FEE_CURRENCY_UNRESOLVED','CURRENCY_UNRESOLVED','TIMEZONE_UNRESOLVED','IDENTITY_AMBIGUOUS','DUPLICATE_SOURCE_RECORD','LEGACY_RECONCILIATION_REQUIRED','WAIVER_UPDATE_REVIEW_REQUIRED','SUBMISSION_TIME_MISSING','SOURCE_TIME_AMBIGUOUS'], true);
         $q->execute([$batch, $row, $code, self::MESSAGES[$code], $severity ?? ($warning ? 'warning' : 'error')]);
         $line = json_encode(['batch_id'=>$batch, 'row_number'=>$row, 'code'=>$code], JSON_THROW_ON_ERROR) . "\n";
         // The structured database diagnostic is authoritative; a private log failure

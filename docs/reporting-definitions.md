@@ -19,7 +19,7 @@ The four supplied shelled exports produced one active subscription with one item
 
 ## Subscriptions and MRR
 
-`vw_subscription_item_rates` has one row per subscription item. It uses the item's approved amount. `amount_basis='unit'` multiplies by an explicit quantity; `csv_reported` treats the reported amount as the whole item amount and never multiplies it again. The item currency must be explicit or resolved from its linked Stripe price, and contradictory item/price currencies make the rate unknown. The interval and interval count must be known; no default count is invented. Monthly equivalent formulas are:
+`vw_subscription_item_rates` has one row per subscription item. It uses the item's approved amount. `amount_basis='unit'` multiplies by an explicit quantity; `csv_reported` retains its historical whole-item convention and never multiplies it again. New subscription CSV rows use `csv_unresolved`: their reported amount is preserved but monthly equivalent is always NULL, even when quantity, interval or linked price facts exist. The item currency must be explicit or resolved from its linked Stripe price, and contradictory item/price currencies make the rate unknown. The interval and interval count must be known; no default count is invented. Monthly equivalent formulas are:
 
 | Billing interval | Monthly equivalent minor units |
 |---|---|
@@ -73,3 +73,10 @@ Database sessions and the existing SQL views remain UTC. Their `*_utc` columns a
 The transaction CSV importer does not infer fee currency from charge or converted currency. A newly imported unverified fee stays NULL. The controlled [historical fee repair](stripe-payment24-import-repair.md) may fill the existing fee cache from a verified balance transaction, retaining its identifier, evidence hash/origin, batch, actor and before/after values in protected audit history. This does not change view formulas or require a migration. Existing balance fields retain priority and are not overwritten.
 
 For balance evidence, `fee_minor` is the balance transaction's **total fee**; `taxes_on_fee_minor`, when a complete breakdown establishes it, is an included component, not an additional subtraction. An absent/incomplete tax breakdown remains unknown. Fees in another currency do not become charge-currency fees or net; original and converted amounts are never added together. Canceled attempts without transaction IDs create no ledger rows; valid-ID failed transactions remain diagnostic records excluded from paid revenue. Existing UTC storage and business-timezone period selection remain unchanged.
+
+
+## Subscription CSV provenance — migration 011
+
+New CSV amounts are exact integer source observations with `amount_basis='csv_unresolved'`. The API's unit-amount semantics do not establish the meaning of a Dashboard CSV Amount field. No quantity multiplication, assumed interval_count, invoice/payment creation or revenue amount is inferred. The item-rate view explicitly blocks unresolved-basis MRR, including through linked price fallbacks. Existing `unit` and `csv_reported` rows/calculations remain unchanged; migration 011 does not reclassify historical data.
+
+A direct nullable item product FK makes modern and legacy plan products available without inventing a modern price. Joins remain one-to-one at item grain. Legacy plan references stay in legacy_plan_id, while stripe_price_id remains a real modern price identifier. Multi-item program revenue still requires the existing reliable attribution rules; new subscription items do not multiply paid transactions. Source subscription dates remain independent of factual membership tenure. See [source semantics and validation](subscription-csv.md).

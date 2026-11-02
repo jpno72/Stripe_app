@@ -220,3 +220,8 @@ Migration 009 preserves the legacy raw JSON contract and adds a separate explici
 ## Native emergency contacts — migration 010
 
 [010_cognito_emergency_contacts.sql](../sql/migrations/010_cognito_emergency_contacts.sql) adds two nullable VARCHAR columns and extends only the native alternative of `ck_cognito_waivers_approved`. Legacy raw keys, indexes, foreign keys, identity triggers, existing records and migrations 001–009 remain unchanged. The consolidated schema includes the same additions and migration checksum for future empty installations; never apply schema.sql to production. No new relationships/person associations are created. Historical contacts require the [audited private backfill](cognito-emergency-contacts.md), not a hash rewrite or schema rebuild.
+
+
+## Subscription CSV items — migration 011
+
+The additive migration adds nullable subscription CSV state digest, distinct source Start clock, scheduled-cancel flag and ended instant; nullable item legacy-plan reference, direct product FK and CSV state digest; and a raw batch/external-ID lookup index. Existing IDs, FKs, unique constraints and historical amount bases remain intact. Native `si_` IDs remain NULL when not supplied. Stable CSV item locators are unique per subscription using the existing constraint. The raw subscription JSON whitelist gains only nine reporting fields. `csv_unresolved` is a new explicit amount basis and is blocked from rate/MRR calculations by the updated item-rate view. Existing source data is neither rewritten nor reclassified. The schema snapshot reflects 011 only for future empty installations. See [subscription-csv.md](subscription-csv.md).

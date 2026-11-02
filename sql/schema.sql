@@ -160,10 +160,11 @@ CREATE TABLE `raw_stripe_subscriptions` (
   KEY `ix_raw_stripe_subscriptions_external` (`source_record_id`),
   KEY `ix_raw_stripe_subscriptions_hash` (`row_hash`),
   KEY `ix_raw_stripe_subscriptions_status` (`processing_status`),
+  KEY `ix_raw_subscription_group` (`import_batch_id`,`source_record_id`),
   CONSTRAINT `fk_raw_stripe_subscriptions_batch` FOREIGN KEY (`import_batch_id`) REFERENCES `import_batches` (`id`),
   CONSTRAINT `ck_raw_stripe_subscriptions_row` CHECK (`source_row_number` > 0),
   CONSTRAINT `ck_raw_stripe_subscriptions_status` CHECK (`processing_status` in ('pending','inserted','updated','skipped','error')),
-  CONSTRAINT `ck_stripe_subscriptions_approved` CHECK (json_type(`raw_values`) = 'OBJECT' and json_contains('["id","Customer ID","Customer Email","Plan","Product","Interval","Amount","Status","Created (UTC)","Coupon","Canceled At (UTC)","Customer Name"]',json_keys(`raw_values`)) = 1)
+  CONSTRAINT `ck_stripe_subscriptions_approved` CHECK (json_type(`raw_values`) = 'OBJECT' and json_contains('["id","Customer ID","Customer Email","Plan","Product","Interval","Amount","Status","Created (UTC)","Coupon","Canceled At (UTC)","Customer Name","Product ID","Quantity","Currency","Start (UTC)","Start Date (UTC)","Current Period Start (UTC)","Current Period End (UTC)","Cancel At Period End","Ended At (UTC)"]',json_keys(`raw_values`)) = 1)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `raw_stripe_transactions` (
@@ -322,6 +323,10 @@ CREATE TABLE `stripe_subscriptions` (
   `created_at` datetime(6) NOT NULL DEFAULT current_timestamp(6),
   `updated_at` datetime(6) NOT NULL DEFAULT current_timestamp(6) ON UPDATE current_timestamp(6),
   `stripe_subscription_started_at` datetime(6) DEFAULT NULL,
+  `csv_state_hash` char(64) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `csv_start_at` datetime(6) DEFAULT NULL,
+  `cancel_at_period_end` tinyint(1) DEFAULT NULL,
+  `ended_at` datetime(6) DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_stripe_subscription` (`stripe_subscription_id`),
   KEY `ix_subscription_customer` (`customer_id`),
@@ -329,6 +334,7 @@ CREATE TABLE `stripe_subscriptions` (
   KEY `ix_subscription_raw` (`latest_raw_id`),
   CONSTRAINT `fk_subscription_customer` FOREIGN KEY (`customer_id`) REFERENCES `stripe_customers` (`id`),
   CONSTRAINT `fk_subscription_raw` FOREIGN KEY (`latest_raw_id`) REFERENCES `raw_stripe_subscriptions` (`id`),
+  CONSTRAINT `ck_subscription_cancel_period` CHECK (`cancel_at_period_end` is null or `cancel_at_period_end` in (0,1)),
   CONSTRAINT `ck_subscription_money` CHECK (`amount_minor` is null or `currency` is not null),
   CONSTRAINT `ck_stripe_subscriptions_currency` CHECK (`currency` is null or `currency` regexp '^[a-z]{3}$')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -538,6 +544,9 @@ CREATE TABLE `stripe_subscription_items` (
   `latest_raw_id` bigint(20) unsigned DEFAULT NULL,
   `created_at` datetime(6) NOT NULL DEFAULT current_timestamp(6),
   `updated_at` datetime(6) NOT NULL DEFAULT current_timestamp(6) ON UPDATE current_timestamp(6),
+  `legacy_plan_id` varchar(255) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `product_id` bigint(20) unsigned DEFAULT NULL,
+  `csv_state_hash` char(64) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_subscription_item_locator` (`subscription_id`,`source_locator`),
   UNIQUE KEY `uq_subscription_item_external` (`stripe_subscription_item_id`),
@@ -546,8 +555,12 @@ CREATE TABLE `stripe_subscription_items` (
   CONSTRAINT `fk_item_price` FOREIGN KEY (`price_id`) REFERENCES `stripe_prices` (`id`),
   CONSTRAINT `fk_item_raw` FOREIGN KEY (`latest_raw_id`) REFERENCES `raw_stripe_subscriptions` (`id`),
   CONSTRAINT `fk_item_subscription` FOREIGN KEY (`subscription_id`) REFERENCES `stripe_subscriptions` (`id`),
+  KEY `ix_item_product` (`product_id`),
+  KEY `ix_item_legacy_plan` (`legacy_plan_id`),
+  CONSTRAINT `fk_item_product` FOREIGN KEY (`product_id`) REFERENCES `stripe_products` (`id`),
+  CONSTRAINT `ck_item_legacy_plan` CHECK (`legacy_plan_id` is null or (`legacy_plan_id` regexp '^plan_[A-Za-z0-9_]+$' and `price_id` is null)),
   CONSTRAINT `ck_item_money` CHECK (`amount_minor` is null or `currency` is not null),
-  CONSTRAINT `ck_item_basis` CHECK (`amount_basis` in ('csv_reported','unit')),
+  CONSTRAINT `ck_item_basis` CHECK (`amount_basis` in ('csv_reported','unit','csv_unresolved')),
   CONSTRAINT `ck_item_interval` CHECK (`billing_interval_count` is null or `billing_interval_count` > 0),
   CONSTRAINT `ck_item_currency` CHECK (`currency` is null or `currency` regexp '^[a-z]{3}$')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -728,7 +741,7 @@ SELECT x.subscription_item_id, x.subscription_id, x.stripe_subscription_item_id,
        x.stripe_price_id, x.stripe_product_id, x.product_name,
        x.amount_minor, x.amount_basis, x.quantity, x.currency,
        x.billing_interval, x.billing_interval_count,
-       CASE WHEN x.amount_minor IS NULL OR x.currency IS NULL OR x.billing_interval_count IS NULL
+       CASE WHEN x.amount_basis = 'csv_unresolved' OR x.amount_minor IS NULL OR x.currency IS NULL OR x.billing_interval_count IS NULL
                  OR x.billing_interval_count = 0 OR (x.amount_basis = 'unit' AND x.quantity IS NULL)
                  OR x.currency_conflict = 1 THEN NULL
             WHEN x.billing_interval = 'month' THEN ROUND(CAST(x.amount_minor AS DECIMAL(28,4)) * x.effective_quantity / x.billing_interval_count, 4)
@@ -739,8 +752,8 @@ SELECT x.subscription_item_id, x.subscription_id, x.stripe_subscription_item_id,
             ELSE NULL END AS monthly_equivalent_minor
 FROM (
     SELECT i.id AS subscription_item_id, i.subscription_id, i.stripe_subscription_item_id,
-           p.stripe_price_id, pr.stripe_product_id,
-           COALESCE(NULLIF(i.product_name_snapshot, ''), pr.name) AS product_name,
+           p.stripe_price_id, COALESCE(pr.stripe_product_id, csv_product.stripe_product_id) AS stripe_product_id,
+           COALESCE(NULLIF(i.product_name_snapshot, ''), pr.name, csv_product.name) AS product_name,
            i.amount_minor, i.amount_basis, i.quantity,
            CASE WHEN i.currency IS NOT NULL AND p.currency IS NOT NULL AND i.currency <> p.currency
                 THEN NULL ELSE COALESCE(i.currency, p.currency) END AS currency,
@@ -755,6 +768,7 @@ FROM (
     FROM stripe_subscription_items i
     LEFT JOIN stripe_prices p ON p.id = i.price_id
     LEFT JOIN stripe_products pr ON pr.id = p.product_id
+    LEFT JOIN stripe_products csv_product ON csv_product.id = i.product_id
 ) x;
 
 CREATE OR REPLACE SQL SECURITY INVOKER VIEW vw_subscription_summary AS
@@ -1086,3 +1100,5 @@ INSERT INTO schema_migrations (version, checksum) VALUES ('008_stripe_guest_cust
 INSERT INTO schema_migrations (version, checksum) VALUES ('009_cognito_native_export', 'f4245b7dfe9d376ca71425f25406377146b3f3ef1368fd12d700bf5f3228b397');
 
 INSERT INTO schema_migrations (version, checksum) VALUES ('010_cognito_emergency_contacts', 'b5c6ccd989a4df7f8764388e07d4aa2ae9a5cced01cc24d5a216c8fae007303d');
+
+INSERT INTO schema_migrations (version, checksum) VALUES ('011_subscription_csv_items', 'c743149523dbb3b8ca8d60435045dc2e609e6023ec52c4d902b6eb714014e041');

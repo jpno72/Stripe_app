@@ -11,6 +11,7 @@ require_once __DIR__ . '/Normalizers.php';
 require_once __DIR__ . '/AbstractImporter.php';
 require_once __DIR__ . '/StripeCustomerImporter.php';
 require_once __DIR__ . '/StripeSubscriptionImporter.php';
+require_once __DIR__ . '/StripeSubscriptionBatch.php';
 require_once __DIR__ . '/StripeTransactionImporter.php';
 require_once __DIR__ . '/CognitoWaiverImporter.php';
 require_once __DIR__ . '/ImportService.php';

@@ -39,10 +39,17 @@ $program=RevenueFilters::fromRequest(['from'=>$month,'to'=>$last,'currency'=>'us
 $programRows=$repo->transactionPage($program,'',0,100,0,'desc');
 check($programRows['total']===1 && (int)$repo->totalsByCurrency($program)[0]['gross_paid_minor']===12000,'program filter scopes table cards and chart source');
 check(count($repo->programBreakdown($program))===1 && $repo->programBreakdown($program)[0]['program_name']==='Annual Program','program chart follows program filter');
-$member=RevenueFilters::fromRequest(['from'=>$month,'to'=>$last,'currency'=>'usd','person'=>'BMA-000013'],$month);
+// Resolve fixture identities through explicit associations; AUTO_INCREMENT allocation is not fixed.
+$fixture=$db->query("SELECT payer.bma_person_id payer_bma,student.bma_person_id member_bma
+    FROM vw_transaction_summary t JOIN people payer ON payer.id=t.payer_person_id
+    JOIN subscription_members map ON map.subscription_id=t.subscription_id JOIN members m ON m.id=map.member_id
+    JOIN people student ON student.id=m.person_id
+    WHERE t.stripe_charge_id LIKE 'ch_REPORT_ANNUAL_%' ORDER BY t.transaction_id LIMIT 1")->fetch();
+check($fixture!==false,'explicit annual reporting fixture identities exist');
+$member=RevenueFilters::fromRequest(['from'=>$month,'to'=>$last,'currency'=>'usd','person'=>$fixture['member_bma']],$month);
 check($repo->transactionPage($member,'',0,100,0,'desc')['total']===1,'member filter uses exclusive subscription assignment');
 check((int)$repo->totalsByCurrency($member)[0]['gross_paid_minor']===12000,'member filter card agrees with transaction');
-$payer=RevenueFilters::fromRequest(['from'=>$month,'to'=>$last,'currency'=>'usd','person'=>'BMA-000012'],$month);
+$payer=RevenueFilters::fromRequest(['from'=>$month,'to'=>$last,'currency'=>'usd','person'=>$fixture['payer_bma']],$month);
 check($repo->transactionPage($payer,'',0,100,0,'desc')['total']===3 && (int)$repo->totalsByCurrency($payer)[0]['gross_paid_minor']===21000,'shared payer charges counted once');
 check($repo->transactionPage($f,'ANNUAL',0,100,0,'desc')['filtered']===1,'transaction search scopes table');
 echo 'Checks: '.$checks.PHP_EOL;

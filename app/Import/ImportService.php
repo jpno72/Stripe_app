@@ -63,11 +63,16 @@ final class ImportService
             $q->execute([$source, $filename, $fileHash, json_encode($safeHeaders, JSON_THROW_ON_ERROR), $source === 'cognito_waivers' ? ($timezone ?: null) : null,
                 json_encode($metadata, JSON_THROW_ON_ERROR), 'running', $account ?: null, $account === '' ? null : $live, $account === '' ? null : 'operator', isset($options['actor_user_id'])?(int)$options['actor_user_id']:null]);
             $batchId = (int)$this->db->lastInsertId();
+            if ($source === 'stripe_subscriptions' && $account !== '') {
+                $context = $this->db->query('SELECT stripe_account_id,stripe_livemode FROM stripe_source_identity WHERE id=1')->fetch();
+                if ($context && $context['stripe_account_id'] !== null && ($context['stripe_account_id'] !== $account || (int)$context['stripe_livemode'] !== (int)$live)) throw new RuntimeException('STRIPE_CONTEXT_CONFLICT');
+            }
             if ($account !== '' && !$dryRun) { StripeContext::establish($this->db, $account, (bool)$live); }
             $importer = match ($source) {
                 'stripe_customers'=>new StripeCustomerImporter(), 'stripe_subscriptions'=>new StripeSubscriptionImporter(),
                 'stripe_transactions'=>new StripeTransactionImporter(), 'cognito_waivers'=>new CognitoWaiverImporter(),
             };
+            $blockedSubscriptions = [];
             $counts = ['row_count'=>0,'inserted_count'=>0,'updated_count'=>0,'skipped_count'=>0,'error_count'=>0];
             while (($cells = fgetcsv($stream, 1048576, ',', '"', '')) !== false) {
                 $row = ++$counts['row_count'];
@@ -75,7 +80,10 @@ final class ImportService
                 $blank = true;
                 foreach ($cells as $cell) { if ($cell !== null && trim((string)$cell) !== '') { $blank = false; break; } }
                 if ($blank) { $counts['skipped_count']++; continue; }
-                $rawId = null;
+                $rawId = null; $subscriptionKey = null;
+                if ($source === 'stripe_subscriptions') {
+                    try { $subscriptionKey = Normalizers::stripeId($cells[array_search('id', $headers, true)] ?? null, 'sub_', true); } catch (Throwable) {}
+                }
                 try {
                     if (count($cells) !== count($headers)) { throw new RuntimeException('INVALID_ROW'); }
                     foreach ($cells as $cell) { if (!is_string($cell) || ($source !== 'cognito_waivers' && !mb_check_encoding($cell, 'UTF-8'))) { throw new RuntimeException('INVALID_ROW'); } }
@@ -84,6 +92,11 @@ final class ImportService
                     unset($cells);
                     $rawId = $record->stage($this->db, $batchId, $row);
                     $v = $record->values();
+                    if ($source === 'stripe_subscriptions') {
+                        $subscriptionKey = Normalizers::stripeId($v['id'], 'sub_', true);
+                        $this->db->prepare('UPDATE raw_stripe_subscriptions SET source_record_id=? WHERE id=?')->execute([$subscriptionKey,$rawId]);
+                        continue; // Complete staging before validating/committing any subscription group.
+                    }
                     $key = $source === 'cognito_waivers'
                         ? CognitoSource::identity($record, $namespace)['source_locator']
                         : (Normalizers::text($v['id'] ?? null) ?? '');
@@ -114,12 +127,14 @@ final class ImportService
                     foreach (array_unique($warnings) as $warning) { ImportDiagnostics::write($this->db, $batchId, $row, $warning, $logPath); }
                 } catch (Throwable $e) {
                     if ($this->db->inTransaction()) { $this->db->rollBack(); }
+                    if ($source === 'stripe_subscriptions' && $subscriptionKey !== null) $blockedSubscriptions[$subscriptionKey] = true;
                     $code = in_array($e->getMessage(), ['INVALID_ROW','INVALID_ENCODING','INVALID_IDENTIFIER','INVALID_AMOUNT','INVALID_DATE','INVALID_CURRENCY','INVALID_STATUS','INVALID_BOOLEAN','INVALID_COUNT','IDENTITY_AMBIGUOUS','STRIPE_REFERENCE_CONFLICT'], true) ? $e->getMessage() : 'PROCESSING_FAILED';
                     ImportDiagnostics::write($this->db, $batchId, $row, $code, $logPath, 'error');
                     if ($rawId !== null) { $this->rawStatus($source, $rawId, 'error'); }
                     $counts['error_count']++;
                 }
             }
+            if ($source === 'stripe_subscriptions') (new StripeSubscriptionBatch($this->db))->process($batchId,$dryRun,$logPath,$blockedSubscriptions,$counts);
             $status = $counts['error_count'] > 0 ? 'completed_with_errors' : 'completed';
             $q = $this->db->prepare('UPDATE import_batches SET row_count = ?, inserted_count = ?, updated_count = ?, skipped_count = ?, error_count = ?, status = ?, completed_at = UTC_TIMESTAMP(6) WHERE id = ?');
             $q->execute([$counts['row_count'],$counts['inserted_count'],$counts['updated_count'],$counts['skipped_count'],$counts['error_count'],$status,$batchId]);

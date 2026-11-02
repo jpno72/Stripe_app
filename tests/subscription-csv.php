@@ -1,0 +1,137 @@
+<?php
+declare(strict_types=1);
+if(PHP_SAPI!=='cli')exit(1);
+ini_set('zend.exception_ignore_args','1');
+require_once dirname(__DIR__).'/app/Import/bootstrap.php';
+require_once dirname(__DIR__).'/src/Migrations.php';
+require_once dirname(__DIR__).'/src/People.php';
+require_once dirname(__DIR__).'/src/IdentityAssociations.php';
+$checks=0;
+function subCheck(bool $ok,string $label):void{global $checks;if(!$ok)throw new RuntimeException('FAIL '.$label);++$checks;echo 'PASS '.$label.PHP_EOL;}
+function subThrows(callable $f,string $label):void{try{$f();}catch(Throwable){subCheck(true,$label);return;}subCheck(false,$label);}
+if(getenv('BMA_SUBSCRIPTION_DB_TEST')!=='1'){echo 'Enable BMA_SUBSCRIPTION_DB_TEST=1 with localhost DB_* and BMA_SUBSCRIPTION_EXPORT.'.PHP_EOL;exit;}
+if(!in_array(getenv('DB_HOST'),['127.0.0.1','localhost'],true))throw new RuntimeException('Local disposable database required.');
+$file=getenv('BMA_SUBSCRIPTION_EXPORT');if(!$file||!is_file($file)||!Paths::isAbsolute($file))throw new RuntimeException('Original private export required.');
+$db=new PDO('mysql:host='.getenv('DB_HOST').';port='.getenv('DB_PORT').';charset=utf8mb4',getenv('DB_USERNAME'),getenv('DB_PASSWORD'),[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC,PDO::ATTR_EMULATE_PREPARES=>false]);
+$name='bma_schema_test_subcsv_'.bin2hex(random_bytes(6));$upgrade=$name.'_upgrade';$directory=sys_get_temp_dir().DIRECTORY_SEPARATOR.$name;mkdir($directory,0700);
+$query=function(string $sql,array $values=[])use($db){$q=$db->prepare($sql);$q->execute($values);return $q;};
+$root=dirname(__DIR__);$databases=[];
+try{
+ // Upgrade a populated 010 snapshot; do not execute old migration files.
+ $db->exec('CREATE DATABASE `'.$upgrade.'` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');$databases[]=$upgrade;$db->exec('USE `'.$upgrade.'`');
+ $baseline=shell_exec('git show 38d2921:sql/schema.sql');if(!is_string($baseline)||str_contains($baseline,'011_subscription_csv_items'))throw new RuntimeException('Expected pre-011 baseline snapshot');
+ foreach(Migrations::statements($baseline) as $sql)$db->exec($sql);
+ $query("INSERT INTO stripe_customers(stripe_customer_id) VALUES ('cus_Existing')");$customer=(int)$db->lastInsertId();
+ $query("INSERT INTO stripe_products(stripe_product_id,name,synced_at) VALUES ('prod_Existing','Verified product',UTC_TIMESTAMP(6))");$product=(int)$db->lastInsertId();
+ $query("INSERT INTO stripe_prices(stripe_price_id,product_id,unit_amount_minor,currency,synced_at) VALUES ('price_Existing',?,12345,'usd',UTC_TIMESTAMP(6))",[$product]);$price=(int)$db->lastInsertId();
+ $query("INSERT INTO stripe_subscriptions(stripe_subscription_id,customer_id,status,amount_minor,currency,synced_at) VALUES ('sub_Existing',?,'active',12345,'usd',UTC_TIMESTAMP(6))",[$customer]);$subscription=(int)$db->lastInsertId();
+ $query("INSERT INTO stripe_subscription_items(subscription_id,source_locator,price_id,amount_minor,currency,amount_basis,quantity) VALUES (?,'csv-single-item',?,12345,'usd','unit',1)",[$subscription,$price]);$oldItem=(int)$db->lastInsertId();
+ $person=(new People($db))->create('Existing','Member');$query('INSERT INTO members(person_id) VALUES (?)',[$person['id']]);$member=(int)$db->lastInsertId();$query('INSERT INTO subscription_members(subscription_id,member_id) VALUES (?,?)',[$subscription,$member]);
+ $before=$db->query('SELECT * FROM stripe_subscriptions')->fetchAll();$beforeItem=$db->query('SELECT * FROM stripe_subscription_items')->fetchAll();$beforeAssignments=$db->query('SELECT * FROM subscription_members')->fetchAll();
+ subCheck(Migrations::run($db,$root.'/sql/migrations',false)===['011_subscription_csv_items'],'only migration 011 pending on populated baseline');
+ subCheck(Migrations::run($db,$root.'/sql/migrations',true)===['011_subscription_csv_items'],'only additive migration 011 applied');
+ $after=$db->query('SELECT * FROM stripe_subscriptions')->fetchAll();foreach($after as &$r)foreach(['csv_state_hash','csv_start_at','cancel_at_period_end','ended_at'] as $k)unset($r[$k]);unset($r);
+ $afterItem=$db->query('SELECT * FROM stripe_subscription_items')->fetchAll();foreach($afterItem as &$r)foreach(['csv_state_hash','legacy_plan_id','product_id'] as $k)unset($r[$k]);unset($r);
+ subCheck($after===$before&&$afterItem===$beforeItem&&$db->query('SELECT * FROM subscription_members')->fetchAll()===$beforeAssignments,'upgrade preserves existing PKs, money, authoritative catalog and member assignments');
+ $defs=[];foreach($db->query('SHOW FULL TABLES')->fetchAll(PDO::FETCH_NUM) as $r)if($r[1]==='BASE TABLE')$defs[$r[0]]=$db->query('SHOW CREATE TABLE `'.$r[0].'`')->fetch(PDO::FETCH_NUM)[1];
+ $db->exec('CREATE DATABASE `'.$name.'` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');$databases[]=$name;$db->exec('USE `'.$name.'`');
+ foreach(Migrations::statements(file_get_contents($root.'/sql/schema.sql')) as $sql)$db->exec($sql);
+ $normalizeDdl=function(string $ddl):array{$other=[];$constraints=[];foreach(explode("\n",preg_replace('/ AUTO_INCREMENT=\\d+/','',$ddl)) as $line){$line=rtrim($line," ,\r\n");if(str_starts_with(trim($line),'CONSTRAINT '))$constraints[]=$line;else $other[]=$line;}sort($constraints);return [$other,$constraints];};
+ foreach($defs as $table=>$ddl){$a=preg_replace('/ AUTO_INCREMENT=\d+/','',$ddl);$b=preg_replace('/ AUTO_INCREMENT=\d+/','',$db->query('SHOW CREATE TABLE `'.$table.'`')->fetch(PDO::FETCH_NUM)[1]);if($normalizeDdl($a)!==$normalizeDdl($b))throw new RuntimeException('Snapshot structure mismatch: '.$table);}
+ subCheck(Migrations::run($db,$root.'/sql/migrations',false)===[],'fresh snapshot matches upgraded tables and checksums');
+ $config=['APP_ENV'=>'production','IMPORT_TEMP_DIR'=>$directory,'PUBLIC_WEB_ROOT'=>$root.'/public'];$service=new ImportService($db,$config);$opts=['stripe_account_id'=>'acct_OfflineSubscriptionFixture','stripe_livemode'=>0];
+ $s=fopen($file,'rb');$headers=fgetcsv($s,1048576,',','"','');$headers[0]=preg_replace('/^\xEF\xBB\xBF/','',$headers[0]);$source=[];while(($cells=fgetcsv($s,1048576,',','"',''))!==false)$source[]=array_combine($headers,$cells);fclose($s);
+ subCheck(count($headers)===38&&count($source)===37&&count(array_unique(array_column($source,'id')))===29,'actual export shape verified independently');
+ $run=function(array $rows,string $filename='fixture.csv',bool $dry=false)use($headers,$service,$opts){$s=fopen('php://temp','w+b');fputcsv($s,$headers,',','"','');foreach($rows as $row)fputcsv($s,array_map(fn($h)=>$row[$h]??'',$headers),',','"','');rewind($s);try{return $service->run($s,'stripe_subscriptions',$filename,$opts+['dry_run'=>$dry]);}finally{fclose($s);}};
+ $tableHash=function(array $tables)use($db){$hash=[];foreach($tables as $table)$hash[$table]=hash('sha256',json_encode($db->query('SELECT * FROM '.$table.' ORDER BY id')->fetchAll()));return $hash;};
+ $normalized=['stripe_subscriptions','stripe_subscription_items','stripe_customers','stripe_prices','stripe_products'];$empty=$tableHash($normalized);
+ $dry=$run($source,'dry.csv',true);subCheck($dry['row_count']===37&&$dry['error_count']===0&&$dry['skipped_count']===37&&$tableHash($normalized)===$empty,'actual full dry run changes no normalized records');
+ // One existing complete profile and one existing stub are reused, not duplicated.
+ $customers=array_values(array_unique(array_column($source,'Customer ID')));$query('INSERT INTO stripe_customers(stripe_customer_id,name,is_stub) VALUES (?, ?,0)',[$customers[0],'Synthetic complete profile']);$query('INSERT INTO stripe_customers(stripe_customer_id,is_stub) VALUES (?,1)',[$customers[1]]);
+ $customerBefore=$db->query('SELECT * FROM stripe_customers ORDER BY id')->fetchAll();
+ $s=fopen($file,'rb');$first=$service->run($s,'stripe_subscriptions','subscriptions.csv',$opts);fclose($s);
+ subCheck($first['row_count']===37&&$first['inserted_count']===29&&$first['updated_count']===8&&$first['error_count']===0,'actual import accounts for all 37 rows with 29 parent inserts and 8 additional items');
+ subCheck((int)$db->query('SELECT COUNT(*) FROM stripe_subscriptions')->fetchColumn()===29&&(int)$db->query('SELECT COUNT(*) FROM stripe_subscription_items')->fetchColumn()===37,'actual normalized counts are exactly 29 subscriptions / 37 items');
+ subCheck((int)$db->query('SELECT COUNT(*) FROM (SELECT subscription_id FROM stripe_subscription_items GROUP BY subscription_id HAVING COUNT(*)>1) x')->fetchColumn()===7,'seven actual subscriptions retain multiple items');
+ subCheck((int)$db->query('SELECT COUNT(*) FROM stripe_subscription_items WHERE legacy_plan_id IS NOT NULL AND price_id IS NULL')->fetchColumn()===1&&(int)$db->query("SELECT COUNT(*) FROM stripe_prices WHERE stripe_price_id LIKE 'plan\_%'")->fetchColumn()===0,'one real legacy plan preserved separately without fabricated price');
+ subCheck($query('SELECT * FROM stripe_customers WHERE id IN (?,?) ORDER BY id',[$customerBefore[0]['id'],$customerBefore[1]['id']])->fetchAll()===$customerBefore,'existing customer/profile stub records not overwritten');
+ $bad=0;foreach($db->query('SELECT i.*,r.raw_values FROM stripe_subscription_items i JOIN raw_stripe_subscriptions r ON r.id=i.latest_raw_id') as $row){$v=json_decode($row['raw_values'],true);if((string)$row['quantity']!==$v['Quantity']||$row['currency']!=='usd'||(int)$row['amount_minor']!==Normalizers::amount($v['Amount'],'usd')||$row['amount_basis']!=='csv_unresolved')++$bad;}
+ subCheck($bad===0,'all actual quantities/currencies/integer amounts preserved with unresolved amount provenance');
+ subCheck((int)$db->query('SELECT COUNT(*) FROM vw_subscription_summary WHERE active_mrr_minor IS NOT NULL')->fetchColumn()===0,'ambiguous CSV amounts do not become factual MRR');
+ $price=(int)$db->query('SELECT MIN(price_id) FROM stripe_subscription_items WHERE price_id IS NOT NULL')->fetchColumn();
+ $query("UPDATE stripe_prices SET unit_amount_minor=12345,currency='usd',recurring_interval='month',interval_count=1,synced_at=UTC_TIMESTAMP(6) WHERE id=?",[$price]);
+ subCheck((int)$query('SELECT COUNT(*) FROM vw_subscription_item_rates WHERE subscription_item_id IN (SELECT id FROM stripe_subscription_items WHERE price_id=?) AND monthly_equivalent_minor IS NOT NULL',[$price])->fetchColumn()===0,'unresolved amount basis blocks MRR even when a linked verified price supplies interval/currency');
+ subCheck((int)$db->query('SELECT COUNT(*) FROM vw_subscription_item_rates WHERE stripe_product_id IS NOT NULL')->fetchColumn()===37,'direct product relationship makes all 37 modern/legacy item products reportable');
+ $saved=$tableHash($normalized);$s=fopen($file,'rb');$repeat=$service->run($s,'stripe_subscriptions','renamed.csv',$opts);fclose($s);$reverse=$run(array_reverse($source),'reordered.csv');
+ subCheck($repeat['duplicate_of']===$first['batch_id']&&$repeat['skipped_count']===37&&$reverse['skipped_count']===37&&$reverse['error_count']===0&&$tableHash($normalized)===$saved,'identical/renamed/reordered imports create no duplicate rows or unnecessary writes');
+ subCheck((int)$query("SELECT COUNT(*) FROM import_errors WHERE import_batch_id=? AND error_code='SUBSCRIPTION_AMOUNT_UNRESOLVED'",[$first['batch_id']])->fetchColumn()===37,'precise amount-semantics warning retained on every populated source amount');
+ $base=$source[0];$base['id']='sub_Fixture';$base['Customer ID']='cus_Fixture';$base['Plan']='price_FixtureA';$base['Product ID']='prod_FixtureA';$base['Customer Name']='Fixture';$base['Customer Email']='fixture@example.invalid';$base['Product']='Fixture product';$base['Quantity']='1';$base['Amount']='10.00';
+ $second=array_replace($base,['Plan'=>'price_FixtureB','Product ID'=>'prod_FixtureB']);
+ $badGroup=$run([$base,array_replace($second,['Amount'=>'invalid'])],'partial.csv');
+ subCheck($badGroup['error_count']===2&&(int)$query("SELECT COUNT(*) FROM stripe_subscriptions WHERE stripe_subscription_id='sub_Fixture'")->fetchColumn()===0&&(int)$query("SELECT COUNT(*) FROM stripe_customers WHERE stripe_customer_id='cus_Fixture'")->fetchColumn()===0,'one invalid item rolls back the whole subscription and its new stub');
+ $repair=$run([$base,$second],'retry.csv');subCheck($repair['inserted_count']===1&&$repair['updated_count']===1&&$repair['error_count']===0,'retry after partial failure safely imports eligible group');
+ $duplicate=$run([$base,$base,$second],'duplicate.csv');subCheck($duplicate['skipped_count']===3&&$duplicate['error_count']===0&&(int)$query("SELECT COUNT(*) FROM import_errors WHERE import_batch_id=? AND error_code='DUPLICATE_SUBSCRIPTION_ITEM'",[$duplicate['batch_id']])->fetchColumn()===1,'identical item repetition diagnosed without creating another item');
+ $baseline=$tableHash($normalized);
+ foreach([['quantity',[$base,array_replace($second,['Quantity'=>'2'])]],['status',[array_replace($base,['Status'=>'canceled']),array_replace($second,['Status'=>'canceled'])]],['price',[$base,array_replace($second,['Plan'=>'price_Replacement'])]],['removed',[$base]],['ambiguous',[$base,array_replace($base,['Quantity'=>'2']),$second]],['customer',[$base,array_replace($second,['Customer ID'=>'cus_Different'])]],['old-snapshot',[array_replace($base,['Current Period Start (UTC)'=>'2001-01-01 00:00:00']),array_replace($second,['Current Period Start (UTC)'=>'2001-01-01 00:00:00'])]]] as [$label,$rows]){
+  $result=$run($rows,$label.'.csv');subCheck($result['error_count']===count($rows)&&$tableHash($normalized)===$baseline,$label.' ambiguity/conflict preserves complete prior subscription atomically');
+ }
+ $third=array_replace($base,['Plan'=>'price_FixtureC','Product ID'=>'prod_FixtureC']);$added=$run([$base,$second,$third],'added.csv');subCheck($added['updated_count']===1&&$added['skipped_count']===2&&$added['error_count']===0,'new distinct item added once when all prior items remain represented');
+ $beforeBlank=$tableHash($normalized);$blankRows=[];foreach([$base,$second,$third] as $r)$blankRows[]=array_replace($r,['Amount'=>'','Customer Name'=>'','Customer Email'=>'','Start (UTC)'=>'','Start Date (UTC)'=>'','Current Period Start (UTC)'=>'','Current Period End (UTC)'=>'','Cancel At Period End'=>'']);
+ $blank=$run($blankRows,'blanks.csv');subCheck($blank['error_count']===0&&$blank['skipped_count']===3&&$tableHash($normalized)===$beforeBlank,'blank later cells never clear known dates, amounts or contacts');
+ $query("UPDATE stripe_subscriptions SET synced_at=UTC_TIMESTAMP(6) WHERE stripe_subscription_id='sub_Fixture'");$verified=$tableHash($normalized);
+ $unchanged=$run([$base,$second,$third],'verified-unchanged.csv');subCheck($unchanged['skipped_count']===3&&$unchanged['error_count']===0&&$tableHash($normalized)===$verified,'unchanged verified subscription is a no-op');
+ $changed=$run([array_replace($base,['Status'=>'past_due']),array_replace($second,['Status'=>'past_due']),array_replace($third,['Status'=>'past_due'])],'verified-change.csv');subCheck($changed['error_count']===3&&$tableHash($normalized)===$verified,'changed verified subscription held without overwriting authority');
+ $query("UPDATE stripe_subscriptions SET synced_at=NULL WHERE stripe_subscription_id='sub_Fixture'");
+ $query("UPDATE stripe_subscription_items SET amount_minor=777 WHERE source_locator=? AND subscription_id=(SELECT id FROM stripe_subscriptions WHERE stripe_subscription_id='sub_Fixture')",[(new StripeSubscriptionImporter())->parse(ApprovedRecord::fromRow('stripe_subscriptions',$headers,array_map(fn($h)=>$base[$h]??'',$headers)))['locator']]);
+ $manual=$tableHash($normalized);$held=$run([$base,$second,$third],'manual.csv');subCheck($held['error_count']===3&&$tableHash($normalized)===$manual,'manual financial correction detected and never overwritten');
+ // Valid historical statuses, scheduled cancellation, missing optional fields and strict identifiers.
+ foreach(['trialing','past_due','canceled','unpaid','incomplete','incomplete_expired','paused'] as $index=>$status){$r=array_replace($base,['id'=>'sub_History'.$index,'Status'=>$status,'Canceled At (UTC)'=>$status==='canceled'?'2026-10-20 00:00:00':'','Ended At (UTC)'=>$status==='canceled'?'2026-10-21 00:00:00':'']);$result=$run([$r]);subCheck($result['inserted_count']===1&&$result['error_count']===0,'historical '.$status.' snapshot accepted without inventing lifecycle dates');}
+ $scheduled=array_replace($base,['id'=>'sub_Scheduled','Cancel At Period End'=>'true']);$run([$scheduled]);subCheck((int)$db->query("SELECT cancel_at_period_end FROM stripe_subscriptions WHERE stripe_subscription_id='sub_Scheduled'")->fetchColumn()===1,'scheduled cancellation preserved separately from canceled status');
+ foreach(['plan_','plan_bad!','pi_wrong','price_bad!'] as $bad){$result=$run([array_replace($base,['id'=>'sub_InvalidPlan','Plan'=>$bad])]);subCheck($result['error_count']===1,'invalid plan/unsupported identifiers rejected');}
+ foreach(['0','-1','1.5','9223372036854775808'] as $bad){$result=$run([array_replace($base,['id'=>'sub_InvalidQuantity','Quantity'=>$bad])]);subCheck($result['error_count']===1,'invalid quantity rejected without coercion');}
+ $unknown=array_replace($base,['id'=>'sub_Unknown','Currency'=>'','Quantity'=>'']);$result=$run([$unknown]);subCheck($result['inserted_count']===1&&$db->query("SELECT amount_minor FROM stripe_subscription_items WHERE subscription_id=(SELECT id FROM stripe_subscriptions WHERE stripe_subscription_id='sub_Unknown')")->fetchColumn()===null,'legacy missing currency/quantity stays unresolved');
+ $filled=array_replace($unknown,['Currency'=>'usd','Quantity'=>'2']);$fill=$run([$filled],'fill-known.csv');subCheck($fill['updated_count']===1&&$fill['error_count']===0&&(int)$db->query("SELECT quantity FROM stripe_subscription_items WHERE subscription_id=(SELECT id FROM stripe_subscriptions WHERE stripe_subscription_id='sub_Unknown')")->fetchColumn()===2,'validated missing currency/amount/quantity can be filled without replacing facts');
+ $zero=array_replace($base,['id'=>'sub_Zero','Amount'=>'0.00']);$z=$run([$zero]);subCheck($z['inserted_count']===1&&(int)$db->query("SELECT amount_minor FROM stripe_subscription_items WHERE subscription_id=(SELECT id FROM stripe_subscriptions WHERE stripe_subscription_id='sub_Zero')")->fetchColumn()===0,'explicit zero amount is preserved as zero, not NULL');
+ $huge=array_replace($base,['id'=>'sub_Huge','Amount'=>'92233720368547758.07']);$h=$run([$huge]);subCheck($h['inserted_count']===1&&(string)$db->query("SELECT amount_minor FROM stripe_subscription_items WHERE subscription_id=(SELECT id FROM stripe_subscriptions WHERE stripe_subscription_id='sub_Huge')")->fetchColumn()===(string)PHP_INT_MAX,'largest integer minor amount retained exactly');
+ foreach(['1.001','92233720368547758.08','oops','1,2.00','-1.00'] as $invalid){$bad=$run([array_replace($base,['id'=>'sub_BadMoney','Amount'=>$invalid])]);subCheck($bad['error_count']===1,'invalid precision/overflow/amount rejected without rounding');}
+ $normalizer=new StripeSubscriptionImporter();$nuls=array_replace($base,['Plan'=>"plan_Invalid\0"]);
+ subThrows(fn()=>$normalizer->parse(ApprovedRecord::fromRow('stripe_subscriptions',$headers,array_map(fn($h)=>$nuls[$h]??'',$headers))),'malformed NUL-suffixed legacy plan rejected before normalization');
+ $grouped=array_replace($base,['id'=>'sub_GroupedMoney','Amount'=>'1,234.56']);$groupedResult=$run([$grouped]);subCheck($groupedResult['inserted_count']===1&&(int)$db->query("SELECT amount_minor FROM stripe_subscription_items WHERE subscription_id=(SELECT id FROM stripe_subscriptions WHERE stripe_subscription_id='sub_GroupedMoney')")->fetchColumn()===123456,'properly grouped decimal amount is parsed exactly');
+ // A structurally invalid sibling must poison its valid sub_ group, even though it cannot be staged.
+ $poisonId='sub_Poison';$poison=array_replace($base,['id'=>$poisonId]);$stream=fopen('php://temp','w+b');fputcsv($stream,$headers,',','"','');fputcsv($stream,array_map(fn($h)=>$poison[$h]??'',$headers),',','"','');fputcsv($stream,[$poisonId,$base['Customer ID']],',','"','');rewind($stream);$poisoned=$service->run($stream,'stripe_subscriptions','poison.csv',$opts);fclose($stream);
+ subCheck($poisoned['error_count']===2&&(int)$query('SELECT COUNT(*) FROM stripe_subscriptions WHERE stripe_subscription_id=?',[$poisonId])->fetchColumn()===0,'unstageable malformed sibling prevents partial normalized group');
+ // Fail one group while allowing an unrelated valid subscription; retry only repairs the failed group.
+ $good=array_replace($base,['id'=>'sub_Independent']);$bad=array_replace($base,['id'=>'sub_Retry','Quantity'=>'0']);$partial=$run([$good,$bad],'partial-file.csv');$retry=$run([$good,array_replace($bad,['Quantity'=>'1'])],'fixed-file.csv');subCheck($partial['inserted_count']===1&&$partial['error_count']===1&&$retry['inserted_count']===1&&$retry['skipped_count']===1,'partially failed file retries complete missing groups without duplicates');
+ // Price/product conflict rolls back new catalog rows and the whole subscription.
+ $catalogBefore=$tableHash($normalized);$conflict=array_replace($base,['id'=>'sub_CatalogConflict','Product ID'=>'prod_Different']);$held=$run([$conflict]);subCheck($held['error_count']===1&&$tableHash($normalized)===$catalogBefore,'known price/product conflict never rewrites catalogs or leaves partial data');
+ $sensitive=array_replace($base,['id'=>'sub_Privacy','details (metadata)'=>'DO_NOT_STORE_12345','Cancellation Feedback'=>'DO_NOT_STORE_12345','Customer Description'=>'DO_NOT_STORE_12345']);$result=$run([$sensitive]);
+ $safe=true;foreach($query('SELECT raw_values FROM raw_stripe_subscriptions WHERE import_batch_id=?',[$result['batch_id']]) as $row)if(str_contains($row['raw_values'],'DO_NOT_STORE_12345'))$safe=false;
+ subCheck($safe&&!str_contains(file_get_contents($directory.'/import-events.log'),'DO_NOT_STORE_12345'),'ignored free text/metadata absent from staging and code-only logs');
+ $unknownHeaders=array_merge($headers,['Future Field']);$stream=fopen('php://temp','w+b');fputcsv($stream,$unknownHeaders,',','"','');$row=array_replace($base,['id'=>'sub_UnknownColumn']);fputcsv($stream,array_merge(array_map(fn($h)=>$row[$h]??'',$headers),['DO_NOT_STORE_12345']),',','"','');rewind($stream);$u=$service->run($stream,'stripe_subscriptions','unknown-column.csv',$opts);fclose($stream);
+ subCheck($u['unknown_headers']===['Future Field']&&!str_contains((string)$query('SELECT raw_values FROM raw_stripe_subscriptions WHERE import_batch_id=?',[$u['batch_id']])->fetchColumn(),'DO_NOT_STORE_12345'),'unknown column value ignored while its safe header metadata remains visible');
+ subThrows(fn()=>$query('INSERT INTO raw_stripe_subscriptions(import_batch_id,source_row_number,raw_values,row_hash) VALUES (?,?,?,?)',[$result['batch_id'],99999,'{"details (metadata)":"DO_NOT_STORE_12345"}',str_repeat('a',64)]),'database whitelist still rejects ignored JSON fields');
+ subCheck((int)$db->query('SELECT COUNT(*) FROM people')->fetchColumn()===0&&(int)$db->query('SELECT COUNT(*) FROM members')->fetchColumn()===0&&(int)$db->query('SELECT COUNT(*) FROM identity_links')->fetchColumn()===0,'CSV import creates no people/members/identity associations');
+ $s=fopen($file,'rb');subThrows(fn()=>$service->run($s,'stripe_subscriptions','wrong-account.csv',['dry_run'=>true,'stripe_account_id'=>'acct_Wrong','stripe_livemode'=>0]),'dry-run rejects conflicting established Stripe account');fclose($s);
+ // Focused existing regressions; use this same disposable DB and generated private config.
+ $config=array_replace($config,['APP_ENV'=>'test','DB_HOST'=>(string)getenv('DB_HOST'),'DB_PORT'=>(string)getenv('DB_PORT'),'DB_DATABASE'=>$name,'DB_USERNAME'=>(string)getenv('DB_USERNAME'),'DB_PASSWORD'=>(string)getenv('DB_PASSWORD')]);
+ $configFile=$directory.'/config.php';file_put_contents($configFile,'<?php return '.var_export($config,true).';');
+ putenv('BMA_CONFIG_FILE='.$configFile);putenv('DB_DATABASE='.$name);putenv('PUBLIC_WEB_ROOT='.$root.'/public');putenv('APP_ENV=test');
+ foreach(['imports.php','reporting.php'] as $test){$output=[];exec(escapeshellarg(PHP_BINARY).' '.escapeshellarg(__DIR__.'/'.$test),$output,$status);if($status!==0)echo implode(PHP_EOL,$output).PHP_EOL;subCheck($status===0,'existing '.$test.' regression passed');echo end($output).PHP_EOL;}
+ $query("INSERT INTO app_users(email,email_normalized,display_name,password_hash,role) VALUES ('regression@example.invalid','regression@example.invalid','Regression admin',?,'admin')",[password_hash(bin2hex(random_bytes(20)),PASSWORD_DEFAULT)]);$actor=(int)$db->lastInsertId();
+ $payer=(new People($db))->create('Regression','Payer');$query("INSERT INTO members(person_id,member_status) VALUES (?,'active')",[$payer['id']]);$member=(int)$db->lastInsertId();$query("INSERT INTO person_relationships(person_id,related_person_id,relationship_type) VALUES (?,?,'self')",[$payer['id'],$payer['id']]);
+ (new IdentityAssociations($db))->decide('stripe','customer',$customers[0],'customer',(int)$payer['id'],'confirmed',$actor);
+ $subId=(int)$query('SELECT id FROM stripe_subscriptions WHERE stripe_subscription_id=?',[$source[0]['id']])->fetchColumn();$query('INSERT INTO subscription_members(subscription_id,member_id) VALUES (?,?)',[$subId,$member]);
+ $protected=$tableHash(['people','members','person_relationships','identity_links','subscription_members','stripe_transactions','cognito_waivers','audit_log']);$again=$run($source,'protected-repeat.csv');
+ subCheck($again['error_count']===0&&$tableHash(['people','members','person_relationships','identity_links','subscription_members','stripe_transactions','cognito_waivers','audit_log'])===$protected,'reimport preserves accepted identities, manual member assignments, payments, waivers and audit history');
+ putenv('BMA_PAYMENT_TEST_DATABASE='.$name);putenv('BMA_GUEST_TEST_DATABASE='.$name);
+ foreach(['stripe-transaction-identifiers.php','stripe-guest-customers.php','membership.php'] as $test){$output=[];exec(escapeshellarg(PHP_BINARY).' '.escapeshellarg(__DIR__.'/'.$test),$output,$status);if($status!==0)echo implode(PHP_EOL,$output).PHP_EOL;subCheck($status===0,'existing '.$test.' regression passed');foreach($output as $line)if(preg_match('/^(Focused checks|Focused guest checks|Checks:)/',$line))echo $line.PHP_EOL;}
+ // Reporting fixtures already exist; add one unrelated dated unknown-fee charge for the revenue test.
+ $query("INSERT INTO stripe_transactions(stripe_charge_id,amount_minor,amount_refunded_minor,currency,status,captured,stripe_created_at) VALUES ('py_RevenueMissingFeeFixture',123,0,'usd','Paid',1,'2026-09-04 12:00:00')");
+ $output=[];exec(escapeshellarg(PHP_BINARY).' '.escapeshellarg(__DIR__.'/revenue.php'),$output,$status);if($status!==0)echo implode(PHP_EOL,$output).PHP_EOL;subCheck($status===0,'existing revenue.php regression passes on explicit current-schema revenue fixtures');echo end($output).PHP_EOL;
+ echo 'ACTUAL FIRST: '.json_encode(array_intersect_key($first,array_flip(['row_count','inserted_count','updated_count','skipped_count','error_count']))).PHP_EOL;
+ echo 'ACTUAL REPEAT: '.json_encode(array_intersect_key($repeat,array_flip(['row_count','inserted_count','updated_count','skipped_count','error_count']))).PHP_EOL;
+ echo 'Subscription CSV checks: '.$checks.PHP_EOL;
+}finally{
+ if($db->inTransaction())$db->rollBack();foreach(array_reverse($databases) as $database)$db->exec('DROP DATABASE `'.$database.'`');
+ foreach(new DirectoryIterator($directory) as $f)if(!$f->isDot()&&$f->isFile())unlink($f->getPathname());rmdir($directory);
+}

@@ -29,21 +29,48 @@ Inspection: customers 14 headings / 1 populated row; subscriptions 13 / 1; trans
 
 ## stripe_subscriptions
 
-| Source column | Action | Database destination | Purpose | Sensitive |
+Migration 011 expands only the subscription whitelist. The complete executable mapping is below (38 supplied headings; 21 approved and 17 ignored). All entries have log_value=false and identity_score=false. `Amount` is retained as integer minor units only with currency, with `amount_basis=csv_unresolved`; no unit-price or whole-item assumption is made. Legacy plans are stored separately without fabricated price IDs.
+
+| Source column | Action | Destination | Purpose | Sensitive |
 |---|---|---|---|---|
-| id | IMPORT | `stripe_subscriptions.stripe_subscription_id` | Subscription identifier | Yes |
-| Customer ID | IMPORT | `stripe_subscriptions.customer_id` | Join by Stripe customer ID | Yes |
-| Customer Description | IGNORE | None | Customer free text unnecessary for reporting | Yes |
-| Customer Email | OPTIONAL | `stripe_subscriptions.customer_email_snapshot` | Contact snapshot | Yes |
-| Plan | IMPORT | `stripe_subscription_items.price_id -> stripe_prices.stripe_price_id` | Price reference | No, alone |
-| Product | IMPORT | `stripe_subscription_items.product_name_snapshot` | Product label, not product ID | Yes |
-| Interval | IMPORT | `stripe_subscription_items.billing_interval` | Billing frequency | Yes |
-| Amount | IMPORT | `stripe_subscription_items.amount_minor` | CSV reported amount, unresolved until currency known | Yes |
-| Status | IMPORT | `stripe_subscriptions.status` | Subscription lifecycle | Yes |
-| Created (UTC) | IMPORT | `stripe_subscriptions.stripe_created_at` | Creation date, not membership start | Yes |
-| Coupon | OPTIONAL | `stripe_subscriptions.coupon_reference` | Discount reference | Yes |
-| Canceled At (UTC) | OPTIONAL | `stripe_subscriptions.canceled_at` | Cancellation date | Yes |
-| Customer Name | OPTIONAL | `stripe_subscriptions.customer_name_snapshot` | Billing name snapshot | Yes |
+| `id` | IMPORT | `stripe_subscriptions.stripe_subscription_id` | Subscription identifier | Yes |
+| `Customer ID` | IMPORT | `stripe_subscriptions.customer_id` | Join by Stripe customer ID | Yes |
+| `Customer Description` | IGNORE | None | Customer free text unnecessary for reporting | Yes |
+| `Customer Email` | OPTIONAL | `stripe_subscriptions.customer_email_snapshot` | Contact snapshot | Yes |
+| `Plan` | IMPORT | `stripe_subscription_items.price_id OR stripe_subscription_items.legacy_plan_id` | Modern price or separate legacy plan reference | No, alone |
+| `Product` | IMPORT | `stripe_subscription_items.product_name_snapshot` | Product label, not product ID | Yes |
+| `Interval` | IMPORT | `stripe_subscription_items.billing_interval` | Billing frequency | Yes |
+| `Amount` | IMPORT | `stripe_subscription_items.amount_minor` | Source-reported amount; currency and unit/total semantics remain distinct | Yes |
+| `Status` | IMPORT | `stripe_subscriptions.status` | Subscription lifecycle | Yes |
+| `Created (UTC)` | IMPORT | `stripe_subscriptions.stripe_created_at` | Creation date, not membership start | Yes |
+| `Coupon` | OPTIONAL | `stripe_subscriptions.coupon_reference` | Discount reference | Yes |
+| `Canceled At (UTC)` | OPTIONAL | `stripe_subscriptions.canceled_at` | Cancellation date | Yes |
+| `Customer Name` | OPTIONAL | `stripe_subscriptions.customer_name_snapshot` | Billing name snapshot | Yes |
+| `Product ID` | OPTIONAL | `stripe_subscription_items.product_id` | Exact product reference; not a program assignment | Yes |
+| `Quantity` | OPTIONAL | `stripe_subscription_items.quantity` | Positive source item quantity; not a payment count | Yes |
+| `Currency` | OPTIONAL | `stripe_subscription_items.currency` | Explicit source currency | Yes |
+| `Start (UTC)` | OPTIONAL | `stripe_subscriptions.csv_start_at` | Distinct source Start clock; not an alias for Start Date | Yes |
+| `Start Date (UTC)` | OPTIONAL | `stripe_subscriptions.stripe_subscription_started_at` | Source subscription start date, never member enrollment | Yes |
+| `Current Period Start (UTC)` | OPTIONAL | `stripe_subscriptions.current_period_start` | Recorded billing period start | Yes |
+| `Current Period End (UTC)` | OPTIONAL | `stripe_subscriptions.current_period_end` | Recorded billing period end, not a promised payment date | Yes |
+| `Cancel At Period End` | OPTIONAL | `stripe_subscriptions.cancel_at_period_end` | Source scheduled cancellation flag | Yes |
+| `Ended At (UTC)` | OPTIONAL | `stripe_subscriptions.ended_at` | Explicit subscription end instant | Yes |
+| `Cancellation Reason` | IGNORE | None | Not required for subscription item reporting | Yes |
+| `Cancellation Feedback` | IGNORE | None | Not required for subscription item reporting | Yes |
+| `Trial Start (UTC)` | IGNORE | None | Not required for subscription item reporting | Yes |
+| `Trial End (UTC)` | IGNORE | None | Not required for subscription item reporting | Yes |
+| `Application Fee Percent` | IGNORE | None | Not required for subscription item reporting | Yes |
+| `Tax Percent` | IGNORE | None | Not required for subscription item reporting | Yes |
+| `Exclusive Tax Rate` | IGNORE | None | Not required for subscription item reporting | Yes |
+| `Inclusive Tax Rate` | IGNORE | None | Not required for subscription item reporting | Yes |
+| `Automatic Tax Enabled` | IGNORE | None | Not required for subscription item reporting | Yes |
+| `Tax Location Recognized` | IGNORE | None | Not required for subscription item reporting | Yes |
+| `mmposCustID (metadata)` | IGNORE | None | Not required for subscription item reporting | Yes |
+| `mmposCurrency (metadata)` | IGNORE | None | Not required for subscription item reporting | Yes |
+| `mmposCreatedBy (metadata)` | IGNORE | None | Not required for subscription item reporting | Yes |
+| `createdDate (metadata)` | IGNORE | None | Not required for subscription item reporting | Yes |
+| `details (metadata)` | IGNORE | None | Not required for subscription item reporting | Yes |
+| `user (metadata)` | IGNORE | None | Not required for subscription item reporting | Yes |
 
 ## stripe_transactions
 
@@ -126,3 +153,8 @@ Blank-ID canceled attempts retain only approved staging fields and a fixed skip 
 | Phone2 | OPTIONAL | cognito_waivers.emergency_contact_phone VARCHAR(100) NULL | Emergency phone, formatting/extensions preserved | Yes | No | No |
 
 New raw snapshots retain the exact approved UTF-8 source strings after lossless Windows-1252 conversion; normalized contacts trim outer whitespace and map blanks to NULL. Overlength or control-character contact text is rejected, never truncated. Neither field enters canonical student/signer identity inputs, person/member creation, relationships, demographic charts, search or match scoring. No other native/legacy key is newly approved. Historical raw snapshots remain unchanged; see [recovery and compatibility rules](cognito-emergency-contacts.md).
+
+
+## Subscription snapshot evidence
+
+`Start (UTC)` and `Start Date (UTC)` are separate approved clocks, stored in csv_start_at and stripe_subscription_started_at respectively. They differ on 21 supplied rows; neither becomes member_since. Trial dates, cancellation free text, fee/tax settings and metadata remain ignored. Raw JSON keys are enforced by migration 011 as well as ApprovedRecord. No customer/transaction/Cognito whitelist changed. See [subscription-csv.md](subscription-csv.md) for source limitations and reviewed-update policy.
