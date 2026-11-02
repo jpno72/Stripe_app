@@ -37,14 +37,7 @@ try {
     Paths::assertPrivate($configFile, Paths::servedRoots([], false));
     define('BMA_CONFIG_PATH', $configFile);
     define('APP_ROOT', $root);
-} catch (Throwable $e) {
-    error_log(
-        'BMA bootstrap failure: ' .
-        get_class($e) . ': ' .
-        $e->getMessage() .
-        ' at ' . $e->getFile() . ':' . $e->getLine()
-    );
-
+} catch (Throwable) {
     http_response_code(503);
     exit('Application access is unavailable.');
 }

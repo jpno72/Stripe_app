@@ -10,7 +10,12 @@ require_once APP_ROOT . '/app/Security/DashboardPermissionService.php';
 function adminConfig(string $requiredRole='viewer'): array
 {
     try {$config=bmaConfig();Security::boot($config);$db=bmaDatabase($config);$user=(new SessionCurrentUserProvider($db,$config))->current();}
-    catch(Throwable){if(isset($config))Security::log($config,'ACCESS_UNAVAILABLE');http_response_code(503);exit('Application access is unavailable.');}
+    catch(Throwable){
+        if(isset($config)){
+            try{Security::log($config,'ACCESS_UNAVAILABLE');}catch(Throwable){}
+        }
+        http_response_code(503);exit('Application access is unavailable.');
+    }
     if(!$user){if(str_starts_with((string)($_SERVER['SCRIPT_NAME']??''),'/api/')){http_response_code(401);header('Content-Type: application/json');exit('{"error":"Sign in required."}');}header('Location: /login.php',true,303);exit;}
     if($requiredRole==='admin'&&$user['role']!=='admin'){http_response_code(403);exit('Administrator access is required.');}
     if(!in_array((string)($_SERVER['REQUEST_METHOD']??'GET'),['GET','POST'],true)){http_response_code(405);header('Allow: GET, POST');exit('Unsupported request method.');}

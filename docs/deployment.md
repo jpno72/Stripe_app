@@ -69,7 +69,7 @@ BMA_CONFIG_FILE=/home/bbmmacom/bma-private/config.php php /home/bbmmacom/reposit
 
 `/_bootstrap.php` is an include bridge, not an endpoint. Public `.htaccess` denies direct HTTP access while PHP can include it internally; the script also returns 404 on direct web execution when identified by SCRIPT_FILENAME. Existing rewrites and security headers remain in place.
 
-Application sessions, canonical app_users and DashboardPermissionService still determine identity and dashboard permissions. `public/admin/.htaccess` is intentionally unchanged: its existing `Require valid-user` must be evaluated against actual cPanel/Apache Basic Auth configuration on the deployed host. Do not remove or assume that outer barrier as part of path deployment. cPanel Directory Privacy, when configured, does not become the application identity provider.
+Application sessions, canonical app_users and DashboardPermissionService determine identity and dashboard permissions. The repository admin .htaccess disables directory indexes and leaves authentication/administrative authorization to PHP; it does not require Apache Basic Auth by default. Optional cPanel Directory Privacy may be configured separately as an additional outer barrier and never becomes the application identity provider. Preserve live cPanel-generated PHP handlers, deployment-specific SetEnv paths and other hosting directives when merging application changes; do not copy those host-specific directives into repository defaults or overwrite the live root .htaccess. Bootstrap failures return the generic HTTP 503 response without detailed exception logging, and a failure to write the fixed administrative error code cannot prevent that response.
 
 ## Configure and install
 
