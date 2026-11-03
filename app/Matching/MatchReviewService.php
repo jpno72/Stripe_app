@@ -52,39 +52,56 @@ final class MatchReviewService
         if ($candidateId < 1 || $actor < 1 || !in_array($action,$allowed,true)) { throw new RuntimeException('INVALID_REVIEW_ACTION'); }
         $notes = trim((string)($input['notes'] ?? ''));
         if (mb_strlen($notes,'UTF-8') > 2000) { throw new RuntimeException('NOTES_TOO_LONG'); }
-        (new IdentityAssociations($this->db))->transaction(function (IdentityAssociations $identity) use ($candidateId,$action,$actor,$input,$notes): void {
-            $q = $this->db->prepare("SELECT id FROM app_users WHERE id = ? AND role = 'admin' AND is_active = 1 FOR UPDATE");
-            $q->execute([$actor]); if (!$q->fetchColumn()) { throw new RuntimeException('ADMIN_REVIEW_REQUIRED'); }
-            $candidate = $this->candidate($candidateId);
-            $before = ['status'=>$candidate['match_status'],'reason'=>$candidate['match_reason'],'payer_person_id'=>$candidate['payer_person_id'],'signer_person_id'=>$candidate['signer_person_id'],'student_person_id'=>$candidate['student_person_id']];
-            $created = ['scopes'=>[],'relationships'=>[],'members'=>[],'people'=>[],'scope_refs'=>[],'relationship_refs'=>[]];
-            if ($action === 'reopen') {
-                $this->reopen($candidate,$identity,$actor,$created);
-                $status = 'possible';
-            } else {
-                if (in_array($candidate['match_status'],['confirmed','rejected'],true)) { throw new RuntimeException('REOPEN_PRIOR_DECISION_FIRST'); }
-                $status = match ($action) {
-                    'confirm_same' => $this->confirmSame($candidate,$identity,$actor,$input,$created),
-                    'confirm_relationship' => $this->confirmRelationship($candidate,$identity,$actor,$input,$created),
-                    'link_existing' => $this->linkExisting($candidate,$identity,$actor,$input,$created),
-                    'create_separate' => $this->createSeparate($candidate,$identity,$actor,$created),
-                    'reject' => $this->reject($candidate),
-                    'later' => 'possible',
-                    default => throw new RuntimeException('INVALID_REVIEW_ACTION'),
-                };
-            }
-            $reason = in_array($action,['later','link_existing','reopen'],true) ? 'manual_review_pending' : 'manual_' . $action;
-            $q = $this->db->prepare('UPDATE identity_match_candidates SET match_status = ?, match_reason = ?, reviewed_by = ?, reviewed_at = UTC_TIMESTAMP(6) WHERE id = ?');
-            $q->execute([$status,$reason,$actor,$candidateId]);
-            $after = $this->candidate($candidateId);
-            $metadata = [
-                'action'=>$action,'before'=>$before,
-                'after'=>['status'=>$after['match_status'],'reason'=>$after['match_reason'],'payer_person_id'=>$after['payer_person_id'],'signer_person_id'=>$after['signer_person_id'],'student_person_id'=>$after['student_person_id']],
-                'created'=>$created,'notes'=>$notes,
-            ];
-            $q = $this->db->prepare('INSERT INTO audit_log (actor_user_id,action,entity_type,entity_id,metadata) VALUES (?,?,?,?,?)');
-            $q->execute([$actor,'match_review_' . $action,'identity_match_candidates',(string)$candidateId,json_encode($metadata,JSON_THROW_ON_ERROR)]);
+        (new IdentityAssociations($this->db))->transaction(function (IdentityAssociations $identity) use ($candidateId,$action,$actor,$input): void {
+            $this->decideInTransaction($identity,$candidateId,$action,$actor,$input);
         });
+    }
+
+    /** Internal bulk orchestration hook; the supplied authoritative writer owns the outer transaction. */
+    public function decideInTransaction(IdentityAssociations $identity,int $candidateId,string $action,int $actor,array $input,array $bulk = []): void
+    {
+        if (!$this->db->inTransaction() || !in_array($action,['confirm_same','confirm_relationship','link_existing','create_separate','reject','later','reopen'],true) || $candidateId<1 || $actor<1) { throw new RuntimeException('REVIEW_TRANSACTION_REQUIRED'); }
+        if ($bulk!==[] && ($action!=='confirm_same' || !preg_match('/\A[a-f0-9]{32}\z/D',(string)($bulk['operation_id']??'')) || !in_array($bulk['rule']??null,['A','B'],true))) { throw new RuntimeException('INVALID_BULK_CONTEXT'); }
+        $notes=trim((string)($input['notes']??''));
+        if(mb_strlen($notes,'UTF-8')>2000)throw new RuntimeException('NOTES_TOO_LONG');
+        $q = $this->db->prepare("SELECT id FROM app_users WHERE id = ? AND role = 'admin' AND is_active = 1 FOR UPDATE");
+        $q->execute([$actor]); if (!$q->fetchColumn()) { throw new RuntimeException('ADMIN_REVIEW_REQUIRED'); }
+        $candidate = $this->candidate($candidateId);
+        $before = ['status'=>$candidate['match_status'],'reason'=>$candidate['match_reason'],'payer_person_id'=>$candidate['payer_person_id'],'signer_person_id'=>$candidate['signer_person_id'],'student_person_id'=>$candidate['student_person_id']];
+        $created = ['scopes'=>[],'relationships'=>[],'members'=>[],'people'=>[],'scope_refs'=>[],'relationship_refs'=>[]];
+        if ($action === 'reopen') {
+            $this->reopen($candidate,$identity,$actor,$created);
+            $status = 'possible';
+        } else {
+            if (in_array($candidate['match_status'],['confirmed','rejected'],true)) { throw new RuntimeException('REOPEN_PRIOR_DECISION_FIRST'); }
+            $status = match ($action) {
+                'confirm_same' => $this->confirmSame($candidate,$identity,$actor,$input,$created,$bulk!==[]),
+                'confirm_relationship' => $this->confirmRelationship($candidate,$identity,$actor,$input,$created),
+                'link_existing' => $this->linkExisting($candidate,$identity,$actor,$input,$created),
+                'create_separate' => $this->createSeparate($candidate,$identity,$actor,$created),
+                'reject' => $this->reject($candidate),
+                'later' => 'possible',
+                default => throw new RuntimeException('INVALID_REVIEW_ACTION'),
+            };
+        }
+        if ($bulk!==[]) {
+            $fresh=$this->candidate($candidateId);
+            if ($bulk['rule']==='B') {
+                $this->associate($identity,$fresh,'signer',(int)$fresh['payer_person_id'],$actor,$created,false,[],true);
+            }
+        }
+        $reason = in_array($action,['later','link_existing','reopen'],true) ? 'manual_review_pending' : 'manual_' . $action;
+        $q = $this->db->prepare('UPDATE identity_match_candidates SET match_status = ?, match_reason = ?, reviewed_by = ?, reviewed_at = UTC_TIMESTAMP(6) WHERE id = ?');
+        $q->execute([$status,$reason,$actor,$candidateId]);
+        $after = $this->candidate($candidateId);
+        $metadata = [
+            'action'=>$action,'before'=>$before,
+            'after'=>['status'=>$after['match_status'],'reason'=>$after['match_reason'],'payer_person_id'=>$after['payer_person_id'],'signer_person_id'=>$after['signer_person_id'],'student_person_id'=>$after['student_person_id']],
+            'created'=>$created,'notes'=>$notes,
+        ];
+        if($bulk!==[])$metadata['bulk_operation']=$bulk;
+        $q = $this->db->prepare('INSERT INTO audit_log (actor_user_id,action,entity_type,entity_id,metadata) VALUES (?,?,?,?,?)');
+        $q->execute([$actor,'match_review_' . $action,'identity_match_candidates',(string)$candidateId,json_encode($metadata,JSON_THROW_ON_ERROR)]);
     }
 
     private function candidate(int $id): array
@@ -102,7 +119,7 @@ final class MatchReviewService
 
     private function newPerson(?string $name, array &$created): int
     {
-        $parts = preg_split('/\s+/u', trim((string)$name));
+        $parts = explode(' ',trim(preg_replace('/[\s\p{Z}]+/u',' ',(string)$name)??''));
         if (!$parts || $parts[0] === '') { throw new RuntimeException('NAME_REQUIRED_FOR_NEW_PERSON'); }
         $first = array_shift($parts); $last = $parts === [] ? null : implode(' ',$parts);
         $person = (new People($this->db))->createInTransaction($first,$last);
@@ -110,7 +127,7 @@ final class MatchReviewService
         return (int)$person['id'];
     }
 
-    private function associate(IdentityAssociations $identity,array $candidate,string $side,int $person,int $actor,array &$created,bool $makeMember=false,array $relationships=[]): void
+    private function associate(IdentityAssociations $identity,array $candidate,string $side,int $person,int $actor,array &$created,bool $makeMember=false,array $relationships=[],bool $reconfirm=false): void
     {
         [$system,$type,$external,$role,$current] = $side === 'stripe'
             ? ['stripe','customer',$candidate['customer_external'],'customer',$candidate['payer_person_id']]
@@ -122,6 +139,11 @@ final class MatchReviewService
             $created['scopes'][] = [$system,$type,$external,$role,$person];
             if ($makeMember) { $created['members'][] = $person; }
             foreach ($relationships as $r) { $created['relationships'][] = $r; }
+        } elseif ($reconfirm && ($prior=$identity->automaticSnapshot($system,$type,$external,$role,$person))!==null) {
+            $identity->decide($system,$type,$external,$role,$person,'confirmed',$actor,$makeMember,$relationships);
+            $created['promotions'][]=['scope'=>[$system,$type,$external,$role,$person],'before'=>$prior,'after'=>$identity->acceptedSnapshot($system,$type,$external,$role,$person)];
+            if($makeMember)$created['members'][]=$person;
+            foreach($relationships as $r)$created['relationships'][]=$r;
         } elseif ($makeMember || $relationships !== []) {
             $identity->supplement($system,$type,$external,$role,$person,$actor,$makeMember,$relationships);
             if ($makeMember) { $created['members'][] = $person; }
@@ -131,11 +153,11 @@ final class MatchReviewService
 
     private function role(array $candidate): string { return $candidate['waiver_role'] === 'signer' ? 'signer' : 'student'; }
 
-    private function confirmSame(array $candidate,IdentityAssociations $identity,int $actor,array $input,array &$created): string
+    private function confirmSame(array $candidate,IdentityAssociations $identity,int $actor,array $input,array &$created,bool $reconfirm=false): string
     {
         $selected = trim((string)($input['person_bma'] ?? ''));
         $person = $selected !== '' ? $this->personId($selected) : ($candidate['payer_person_id'] === null ? $this->newPerson($candidate['stripe_name'],$created) : (int)$candidate['payer_person_id']);
-        $this->associate($identity,$candidate,'stripe',$person,$actor,$created);
+        $this->associate($identity,$candidate,'stripe',$person,$actor,$created,false,[],$reconfirm);
         $role = $this->role($candidate);
         $memberExists = $this->memberExists($person);
         $selfLabel = strtolower(trim((string)$candidate['relationship_to_student'])) === 'self';
@@ -145,7 +167,7 @@ final class MatchReviewService
         $relations = $role === 'student' && $selfLabel ? [[$person,$person,'self']] : [];
         array_push($created['relationship_refs'], ...$relations);
         $relations = $this->newRelationships($relations);
-        $this->associate($identity,$candidate,$role,$person,$actor,$created,$role === 'student' && !$memberExists,$relations);
+        $this->associate($identity,$candidate,$role,$person,$actor,$created,$role === 'student' && !$memberExists,$relations,$reconfirm);
         return 'confirmed';
     }
 
@@ -230,6 +252,7 @@ final class MatchReviewService
         if (($meta['after']['status'] ?? null) !== $candidate['match_status']) { throw new RuntimeException('REVIEW_STATE_CHANGED'); }
         $old = $meta['created'] ?? [];
         $this->checkLaterDependencies((int)$prior['id'],(int)$candidate['id'],$old);
+        foreach (array_reverse($old['promotions']??[]) as $promotion) { $identity->restorePromotion($promotion,$actor); }
         foreach (array_reverse($old['relationships'] ?? []) as $r) {
             $identity->removeReviewedRelationship($r,$actor);
         }
@@ -242,6 +265,7 @@ final class MatchReviewService
 
     private function checkLaterDependencies(int $priorAuditId,int $candidateId,array $old): void
     {
+        foreach($old['promotions']??[] as $promotion)$old['scopes'][]=$promotion['scope'];
         if (($old['scopes'] ?? []) === [] && ($old['relationships'] ?? []) === []) { return; }
         $q = $this->db->prepare("SELECT id,entity_id,action,metadata FROM audit_log WHERE id>? AND entity_type='identity_match_candidates' AND action LIKE 'match_review_%' ORDER BY id");
         $q->execute([$priorAuditId]);

@@ -32,7 +32,7 @@ function adminReviewActor(PDO $db,array $config): int
 
 function adminHead(string $title, array $styles = []): void
 {
-    $active = basename((string) ($_SERVER['SCRIPT_NAME'] ?? '')) === 'matches.php' ? 'matches' : 'imports';
+    $active = in_array(basename((string) ($_SERVER['SCRIPT_NAME'] ?? '')), ['matches.php','bulk-matches.php'], true) ? 'matches' : 'imports';
     uiLayoutStart($title, $active, '', $styles);
     echo '<div class="admin-page">';
 }

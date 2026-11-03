@@ -32,6 +32,31 @@ final class IdentityAssociations
         finally { $this->batchMode = false; }
     }
 
+    /** Accepted-row snapshots support explicit bulk confirmation and reversible automatic-link promotion. */
+    public function acceptedSnapshot(string $system,string $type,string $external,string $role,int $person): ?array
+    {
+        if(!$this->batchMode)throw new RuntimeException('REVIEW_TRANSACTION_REQUIRED');
+        $q=$this->db->prepare("SELECT id,match_status,match_method,match_score,match_reason,match_evidence,reviewed_by,reviewed_at,updated_at FROM identity_links WHERE source_system=? AND source_type=? AND external_id=? AND source_role=? AND person_id=? AND match_status IN ('automatic','confirmed') FOR UPDATE");
+        $q->execute([$system,$type,$external,$role,$person]);return $q->fetch()?:null;
+    }
+    public function automaticSnapshot(string $system,string $type,string $external,string $role,int $person): ?array
+    {
+        $row=$this->acceptedSnapshot($system,$type,$external,$role,$person);return ($row['match_status']??null)==='automatic'?$row:null;
+    }
+    public function restorePromotion(array $promotion,int $actor): void
+    {
+        if(!$this->batchMode)throw new RuntimeException('REVIEW_TRANSACTION_REQUIRED');
+        $q=$this->db->prepare("SELECT id FROM app_users WHERE id=? AND role='admin' AND is_active=1 FOR UPDATE");$q->execute([$actor]);
+        if(!$q->fetchColumn())throw new RuntimeException('ADMIN_REVIEW_REQUIRED');
+        $scope=$promotion['scope']??[];$before=$promotion['before']??[];$after=$promotion['after']??[];
+        if(count($scope)!==5||($before['match_status']??null)!=='automatic'||($after['match_status']??null)!=='confirmed')throw new RuntimeException('REVIEW_STATE_CHANGED');
+        $current=$this->acceptedSnapshot(...$scope);
+        if($current!==$after)throw new RuntimeException('REVIEW_STATE_CHANGED');
+        $q=$this->db->prepare('UPDATE identity_links SET match_status=?,match_method=?,match_score=?,match_reason=?,match_evidence=?,reviewed_by=?,reviewed_at=?,updated_at=UTC_TIMESTAMP(6) WHERE id=?');
+        $q->execute([$before['match_status'],$before['match_method'],$before['match_score'],$before['match_reason'],$before['match_evidence'],$before['reviewed_by'],$before['reviewed_at'],$before['id']]);
+        $this->audit($actor,'identity_promotion_reopened','identity_links',(string)$before['id'],['scope'=>$scope]);
+    }
+
     /** Reopen only a link created by the decision being undone; retain its evidence row. */
     public function reopenAccepted(string $system, string $type, string $external, string $role, int $person, int $actor): void
     {

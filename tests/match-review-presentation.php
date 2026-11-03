@@ -5,6 +5,7 @@ require_once dirname(__DIR__) . '/src/AppTime.php';
 require_once dirname(__DIR__) . '/app/Matching/WaiverSourceRole.php';
 require_once dirname(__DIR__) . '/app/Views/layout.php';
 require_once dirname(__DIR__) . '/app/Views/match-review.php';
+require_once dirname(__DIR__) . '/app/Views/bulk-match-review.php';
 function e(mixed $value): string { return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 // A synthetic navigation provider only; this fixture never authenticates or connects to a database.
 final class DashboardPermissionService {
@@ -34,6 +35,12 @@ function fixtureRender(array $rows, callable $history): string {
     ob_start();uiLayoutStart('Identity match review','matches','',['/assets/css/match-review.css?v=2']);
     echo '<div class="admin-page">';renderMatchReview(['rows'=>$rows,'total'=>count($rows)],'', 'all',1,$history);echo '</div>';uiLayoutEnd();return (string)ob_get_clean();
 }
+function fixtureBulk(int $eligible): string {
+    $summary=['total_candidates'=>12,'eligible_candidates'=>$eligible,'payer_signer_candidates'=>4,'self_student_candidates'=>4,'people_to_create'=>2,'people_to_reuse'=>1,'members_to_create'=>2,'additional_waivers'=>3,'associations_to_confirm'=>9,'excluded_candidates'=>4,'already_decided'=>0,'remaining_manual'=>4];
+    $preview=['summary'=>$summary,'exclusions'=>['student_rule_not_met'=>4]];$pending=['operation'=>str_repeat('a',32)];
+    ob_start();uiLayoutStart('Bulk confirm exact matches','matches','',['/assets/css/match-review.css?v=3']);echo '<div class="admin-page">';renderBulkMatchPreview($preview,$pending);echo '</div>';uiLayoutEnd();return (string)ob_get_clean();
+}
+$bulkHtml=fixtureBulk(8);$bulkEmpty=fixtureBulk(0);
 $before=serialize([$rows,$events]);$html=fixtureRender($rows,$history);$empty=fixtureRender([],$history);
 $checks=0;$check=function(bool $ok,string $label)use(&$checks):void{if(!$ok)throw new RuntimeException('FAIL '.$label);++$checks;echo 'PASS '.$label.PHP_EOL;};
 $doc=new DOMDocument();@$doc->loadHTML($html);$x=new DOMXPath($doc);
@@ -59,5 +66,9 @@ $check(serialize([$rows,$events])===$before,'rendering leaves fixture records an
 $check(str_contains($empty,'No candidates found')&&!str_contains($empty,'class="review-candidate"'),'empty state renders without phantom candidates');
 foreach(['app/Views/match-review.php','public/admin/matches.php','app/Views/layout.php','public/admin/_common.php'] as $file){$bytes=file_get_contents(dirname(__DIR__).'/'.$file);$check(preg_match('//u',$bytes)===1&&!str_starts_with($bytes,"\xEF\xBB\xBF"),'UTF-8 source without BOM: '.$file);}
 $check(str_contains(file_get_contents(dirname(__DIR__).'/public/assets/js/match-review.js'),'window.confirm'),'existing decision confirmation JavaScript retained');
-$out=getenv('BMA_REVIEW_RENDER_DIR');if($out!==false&&$out!==''){if(!is_dir($out))throw new RuntimeException('Existing private render directory required');file_put_contents($out.'/matches.html',$html);file_put_contents($out.'/empty.html',$empty);}
+$check(str_contains($html,'href="/admin/bulk-matches.php"'),'bulk preview linked from the review queue');
+$check(str_contains($bulkHtml,'Confirm 8 exact matches')&&str_contains($bulkHtml,'Read-only preview'),'bulk preview displays explicit confirmation count');
+$check(str_contains($bulkHtml,'name="csrf"')&&str_contains($bulkHtml,'name="confirm_exact"')&&str_contains($bulkHtml,'name="operation_id"'),'bulk form preserves CSRF, operation nonce and explicit confirmation');
+$check(!str_contains($bulkEmpty,'type="submit"')||substr_count($bulkEmpty,'type="submit"')===1,'zero eligible preview has no bulk submit (shared logout only)');
+$out=getenv('BMA_REVIEW_RENDER_DIR');if($out!==false&&$out!==''){if(!is_dir($out))throw new RuntimeException('Existing private render directory required');file_put_contents($out.'/matches.html',$html);file_put_contents($out.'/empty.html',$empty);file_put_contents($out.'/bulk.html',$bulkHtml);file_put_contents($out.'/bulk-empty.html',$bulkEmpty);}
 echo 'Presentation checks: '.$checks.PHP_EOL;
