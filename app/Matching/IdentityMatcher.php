@@ -32,12 +32,17 @@ final class IdentityMatcher
                 foreach ($customers as $customer) {
                     $last = (int)$customer['id'];
                     foreach ($this->waiverIds($customer) as $waiverId) {
-                        $q = $this->db->prepare('SELECT id, source_locator, source_name, signer_print_name, contact_email, contact_phone, address_text, student_birth_date, relationship_to_student FROM cognito_waivers WHERE id = ?');
+                        $q = $this->db->prepare('SELECT id, source_locator, source_name, signer_print_name, contact_email, contact_phone, address_text, student_birth_date, relationship_to_student,source_format,source_name_role,
+                            EXISTS(SELECT 1 FROM identity_links reviewed WHERE reviewed.source_system=\'cognito\' AND reviewed.source_type=\'waiver\' AND reviewed.external_id=cognito_waivers.source_locator AND reviewed.source_role=\'student\' AND reviewed.person_id=cognito_waivers.student_person_id AND reviewed.match_status=\'confirmed\' AND reviewed.reviewed_by IS NOT NULL AND reviewed.reviewed_at IS NOT NULL) student_identity_reviewed FROM cognito_waivers WHERE id = ?');
                         $q->execute([$waiverId]); $waiver = $q->fetch();
                         if (!$waiver) { continue; }
                         foreach (['signer','source_name_unresolved'] as $role) {
                             if ($role === 'signer' && $waiver['signer_print_name'] === null) { continue; }
                             if ($role === 'source_name_unresolved' && $waiver['source_name'] === null) { continue; }
+                            // Read-only previews honor the same manual precedence as the guarded save path.
+                            if ($this->manualCandidate($customer,$waiver,$role)) {
+                                ++$result['pairs_evaluated']; ++$result['manual_preserved']; continue;
+                            }
                             $candidate = $this->evaluate($customer, $waiver, $role);
                             $result['pairs_evaluated']++;
                             if (!$dryRun) {
@@ -47,7 +52,9 @@ final class IdentityMatcher
                             $result[$candidate['status']]++;
                             if (count($result['candidate_summaries']) < 25) {
                                 $result['candidate_summaries'][] = ['customer_record_id'=>(int)$customer['id'], 'waiver_record_id'=>(int)$waiver['id'],
-                                    'role'=>$role, 'score'=>$candidate['score'], 'status'=>$candidate['status'], 'reason'=>$candidate['reason']];
+                                    'role'=>$role, 'comparison_role'=>WaiverSourceRole::comparison($waiver,$role),
+                                    'student_identity_reviewed'=>WaiverSourceRole::isStudent($waiver)&&(bool)$waiver['student_identity_reviewed'],
+                                    'score'=>round((float)$candidate['score'],4), 'status'=>$candidate['status'], 'reason'=>$candidate['reason']];
                             }
                         }
                     }
@@ -95,17 +102,26 @@ final class IdentityMatcher
     {
         $score = $this->scorer->score($this->resolver->payerProfile($customer), $this->resolver->waiverProfile($waiver, $role), $role);
         $payerPerson = $this->resolver->acceptedPerson('stripe','customer',$customer['stripe_customer_id'],'customer');
-        $waiverPerson = $role === 'signer' ? $this->resolver->acceptedPerson('cognito','waiver',$waiver['source_locator'],'signer') : null;
+        $identityRole=$role==='signer'?'signer':(WaiverSourceRole::isStudent($waiver)?'student':null);
+        $waiverPerson=$identityRole===null?null:$this->resolver->acceptedPerson('cognito','waiver',$waiver['source_locator'],$identityRole);
         $status = $score['score'] >= $this->reviewThreshold ? 'possible' : 'unmatched';
         $reason = $score['reason'];
-        if ($payerPerson !== null && $waiverPerson !== null) {
-            if ($payerPerson === $waiverPerson) { $status = 'linked'; $reason = 'existing_links_same_person'; $score['score'] = 1.0; $score['method'] = 'existing_identity_links'; }
+        if ($payerPerson!==null && $identityRole!==null && $this->resolver->rejectedFor('cognito','waiver',$waiver['source_locator'],$identityRole,$payerPerson)) {
+            $status='conflict';$reason='manual_rejection';$score['hard_conflict']=true;
+        } elseif ($payerPerson !== null && $waiverPerson !== null) {
+            if ($payerPerson === $waiverPerson) {
+                if($identityRole!=='student'||!empty($waiver['student_identity_reviewed'])) { $status='linked';$reason='existing_links_same_person';$score['score']=1.0;$score['method']='existing_identity_links'; }
+            }
             else { $status = 'conflict'; $reason = 'existing_links_different_people'; $score['hard_conflict'] = true; }
-        } elseif ($payerPerson !== null && $role === 'signer' && $this->resolver->rejectedFor('cognito','waiver',$waiver['source_locator'],'signer',$payerPerson)) {
-            $status = 'conflict'; $reason = 'manual_rejection'; $score['hard_conflict'] = true;
         }
         return ['score'=>$score['score'], 'method'=>$score['method'], 'reason'=>$reason, 'hard_conflict'=>$score['hard_conflict'],
             'evidence'=>$score['evidence'], 'status'=>$status];
+    }
+
+    private function manualCandidate(array $customer,array $waiver,string $role): bool
+    {
+        $q=$this->db->prepare("SELECT 1 FROM identity_match_candidates WHERE stripe_customer_id=? AND cognito_waiver_id=? AND waiver_role=? AND (match_status IN ('confirmed','rejected') OR match_reason='manual_review_pending') LIMIT 1");
+        $q->execute([$customer['id'],$waiver['id'],$role]);return $q->fetchColumn()!==false;
     }
 
     private function save(array $customer, array $waiver, string $role, array $candidate): bool

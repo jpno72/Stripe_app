@@ -50,7 +50,7 @@ function reviewBadge(string $status): string
     [$color,$label] = $labels[$status] ?? ['secondary',$status];
     return '<span class="badge text-bg-' . e($color) . '">' . e($label) . '</span>';
 }
-function reviewEvidence(string $json): string
+function reviewEvidence(string $json,array $waiver=[]): string
 {
     $data = json_decode($json,true) ?: [];
     $labels = [
@@ -58,19 +58,25 @@ function reviewEvidence(string $json): string
         'exact_email'=>'Email matches','exact_phone'=>'Phone matches','exact_postal'=>'Postal code matches',
         'exact_address'=>'Address matches','exact_birth_date'=>'Birth date matches',
         'possible_parent_student_structure'=>'Form suggests a parent/student structure',
+        'explicit_student_name'=>'Form explicitly labels this name as the student',
+        'student_identity_unverified'=>'Student BMA identity requires administrator review',
         'different_full_name'=>'Full names differ','different_last_name'=>'Last names differ',
         'conflicting_birth_date'=>'Birth dates conflict','source_name_role_unverified'=>'Form Name role is unverified',
         'self_label_names_disagree'=>'Self label conflicts with differing names',
     ];
+    if(WaiverSourceRole::isStudent($waiver)) {
+        $labels['source_name_role_unverified']=!empty($waiver['student_identity_reviewed'])?'Historical review flag; student BMA identity now has administrator confirmation':'Form labels the student; BMA identity still requires administrator review';
+    }
     $html = '';
     foreach (['signals'=>['âœ“','text-success'],'conflicts'=>['âš ','text-danger']] as $kind=>$decor) {
         foreach ($data[$kind] ?? [] as $code) { $html .= '<li><span class="' . $decor[1] . '" aria-hidden="true">' . $decor[0] . '</span> ' . e($labels[$code] ?? $code) . '</li>'; }
     }
     return $html === '' ? '<li>No supporting evidence recorded.</li>' : $html;
 }
-function reviewReason(string $reason): string
+function reviewReason(string $reason,array $waiver=[]): string
 {
-    $labels = ['manual_review_pending'=>'Held for administrator review','source_name_role_unverified'=>'Form Name role needs review',
+    if(WaiverSourceRole::isStudent($waiver)&&in_array($reason,['source_name_role_unverified','student_identity_unverified'],true))return !empty($waiver['student_identity_reviewed'])?'Student BMA identity has administrator confirmation':'Student BMA identity needs administrator review';
+    $labels = ['student_identity_unverified'=>'Student BMA identity needs administrator review','manual_review_pending'=>'Held for administrator review','source_name_role_unverified'=>'Form Name role needs review',
         'self_label_names_disagree'=>'Self label conflicts with names','manual_rejection'=>'Previously rejected identity',
         'existing_links_same_person'=>'Existing links identify one person','existing_links_different_people'=>'Existing links identify different people',
         'insufficient_evidence'=>'Insufficient evidence','review_signals'=>'Multiple review signals',
@@ -88,14 +94,16 @@ echo '</select></div><div class="col-lg-2"><button class="btn btn-primary w-100"
 if ($queue['rows'] === []) { echo '<div class="card card-body text-center py-5"><h2 class="h5">No candidates found</h2><p class="text-secondary mb-0">Try another search or status.</p></div>'; }
 foreach ($queue['rows'] as $row) {
     $score = (int)round((float)$row['match_score']*100);
+    $comparison=WaiverSourceRole::comparison($row,$row['waiver_role']);
+    $comparisonLabel=$comparison==='signer'?'Signer comparison':($comparison==='student'?'Student comparison · '.(!empty($row['student_identity_reviewed'])?'identity reviewed':'BMA identity unverified'):'Form Name role unresolved');
     $waiverName = $row['waiver_role'] === 'signer' ? $row['signer_print_name'] : $row['source_name'];
     echo '<article class="match-card bg-white mb-4 overflow-hidden"><div class="p-4"><div class="d-flex flex-wrap gap-2 align-items-center mb-3">' . reviewBadge((string)$row['match_status']);
     if ($score >= 90 && !$row['hard_conflict'] && in_array($row['match_status'],['possible','linked','confirmed'],true)) { echo '<span class="badge text-bg-primary">High confidence</span>'; }
-    echo '<span class="small text-secondary">Candidate #' . e($row['id']) . ' Â· ' . e($row['waiver_role'] === 'signer' ? 'Signer comparison' : 'Form Name role unresolved') . '</span></div>';
+    echo '<span class="small text-secondary">Candidate #' . e($row['id']) . ' Â· ' . e($comparisonLabel) . '</span></div>';
     echo '<div class="row g-4"><section class="col-lg-5"><div class="side-label mb-2">STRIPE Â· PAYER ACCOUNT</div><h2 class="h4 mb-1">' . e($row['stripe_name'] ?: 'Name unavailable') . '</h2><div class="detail">' . e($row['stripe_email'] ?: 'Email unavailable') . '<br>Phone not supplied in Stripe CSV<br>' . e(trim((string)$row['address_line1'] . ' ' . (string)$row['address_city'] . ' ' . (string)$row['address_postal_code']) ?: 'Address unavailable') . '</div><div class="small mt-2">' . e($row['stripe_customer_id']) . ' Â· ' . e($row['payer_bma'] ?: 'No BMA person linked') . '</div></section>';
-    echo '<section class="col-lg-5"><div class="side-label mb-2">COGNITO Â· ' . e($row['waiver_role'] === 'signer' ? 'SIGNER' : 'UNRESOLVED NAME') . '</div><h2 class="h4 mb-1">' . e($waiverName ?: 'Name unavailable') . '</h2><div class="detail">' . e($row['contact_email'] ?: 'Email unavailable') . ' <small>(owner unverified)</small><br>' . e($row['contact_phone'] ?: 'Phone unavailable') . ' <small>(owner unverified)</small><br>' . e($row['address_text'] ?: 'Address unavailable') . '</div><div class="small mt-2">Signer: ' . e($row['signer_bma'] ?: 'unlinked') . ' Â· Student: ' . e($row['student_bma'] ?: 'unlinked') . '</div></section>';
-    echo '<div class="col-lg-2"><div class="side-label mb-2">CONFIDENCE</div><div class="score">' . e($score) . '<span class="fs-6"> / 100</span></div><div class="small text-secondary mt-2">' . e(reviewReason((string)$row['match_reason'])) . '</div></div></div>';
-    echo '<div class="row mt-3"><div class="col-lg-5"><strong>Relationship in form:</strong> ' . e($row['relationship_to_student'] ?: 'Not supplied') . '<p class="small text-secondary mb-0">The formâ€™s Name field and household contact ownership require review.</p></div><div class="col-lg-7"><strong>Evidence and conflicts</strong><ul class="evidence-list small mt-2 mb-0">' . reviewEvidence((string)$row['evidence']) . '</ul></div></div></div>';
+    echo '<section class="col-lg-5"><div class="side-label mb-2">COGNITO Â· ' . e($comparison==='signer'?'SIGNER':($comparison==='student'?'STUDENT (SOURCE LABEL)':'UNRESOLVED NAME')) . '</div><h2 class="h4 mb-1">' . e($waiverName ?: 'Name unavailable') . '</h2><div class="detail">' . e($row['contact_email'] ?: 'Email unavailable') . ' <small>(owner unverified)</small><br>' . e($row['contact_phone'] ?: 'Phone unavailable') . ' <small>(owner unverified)</small><br>' . e($row['address_text'] ?: 'Address unavailable') . '</div><div class="small mt-2">Signer: ' . e($row['signer_bma'] ?: 'unlinked') . ' Â· Student: ' . e($row['student_bma'] ?: 'unlinked') . '</div></section>';
+    echo '<div class="col-lg-2"><div class="side-label mb-2">CONFIDENCE</div><div class="score">' . e($score) . '<span class="fs-6"> / 100</span></div><div class="small text-secondary mt-2">' . e(reviewReason((string)$row['match_reason'],$row)) . '</div></div></div>';
+    echo '<div class="row mt-3"><div class="col-lg-5"><strong>Relationship in form:</strong> ' . e($row['relationship_to_student'] ?: 'Not supplied') . '<p class="small text-secondary mb-0">' . e(WaiverSourceRole::identityNotice($row)) . '</p></div><div class="col-lg-7"><strong>Evidence and conflicts</strong><ul class="evidence-list small mt-2 mb-0">' . reviewEvidence((string)$row['evidence'],$row) . '</ul></div></div></div>';
     echo '<div class="match-action p-4 bg-light"><form method="post" class="review-form"><input type="hidden" name="csrf" value="' . e($_SESSION['match_review_csrf']) . '"><input type="hidden" name="candidate_id" value="' . e($row['id']) . '"><div class="row g-3"><div class="col-lg-4"><label class="form-label fw-semibold">Decision</label><select name="action" class="form-select action-select" required><option value="">Choose actionâ€¦</option>';
     foreach (['confirm_same'=>'Confirm same person','confirm_relationship'=>'Confirm payer/member relationship','link_existing'=>'Link to existing person','create_separate'=>'Create new separate person','reject'=>'Reject proposed match','later'=>'Mark for later review','reopen'=>'Undo / reopen prior decision'] as $key=>$label) { echo '<option value="' . e($key) . '">' . e($label) . '</option>'; }
     echo '</select></div><div class="col-lg-4"><label class="form-label">Existing BMA person ID</label><input name="person_bma" class="form-control" placeholder="BMA-000001"><div class="form-text">For same-person or link-existing actions; leave blank to create for same-person.</div></div><div class="col-lg-4"><label class="form-label">Link side</label><select name="side" class="form-select"><option value="">Choose sideâ€¦</option><option value="stripe">Stripe payer</option><option value="signer">Cognito signer</option><option value="student">Cognito student</option></select></div>';

@@ -23,7 +23,9 @@ final class PersonResolver
             'email'=>$waiver['contact_email'], 'phone'=>$waiver['contact_phone'], 'postal'=>$postal,
             'address'=>$address, 'birth_date'=>$role === 'source_name_unresolved' ? $waiver['student_birth_date'] : null,
             'relationship'=>$waiver['relationship_to_student'], 'source_name'=>$waiver['source_name'],
-            'signer_name'=>$waiver['signer_print_name']];
+            'signer_name'=>$waiver['signer_print_name'],
+            'source_format'=>$waiver['source_format']??null,'source_name_role'=>$waiver['source_name_role']??null,
+            'student_identity_reviewed'=>(bool)($waiver['student_identity_reviewed']??false)];
     }
 
     public function acceptedPerson(string $system, string $type, string $external, string $role): ?int
@@ -42,6 +44,7 @@ final class PersonResolver
 
     public function canAutoAttachSigner(array $score, ?int $payerPerson, ?int $signerPerson, float $threshold, bool $uniqueWinner): bool
     {
+        if (($score['evidence']['role']??null)!=='signer')return false;
         if ($payerPerson === null || $signerPerson !== null || !$uniqueWinner || $score['score'] < $threshold || $score['hard_conflict']) { return false; }
         $signals = $score['evidence']['signals'];
         // Contact owner is unresolved. Require name + email + an independent location or phone signal.
@@ -49,7 +52,7 @@ final class PersonResolver
             && (in_array('exact_phone', $signals, true) || in_array('exact_address', $signals, true) || in_array('exact_postal', $signals, true));
     }
 
-    /** Admin-reviewed role assignments; source Name is never treated as student without this explicit decision. */
+    /** Admin-reviewed person assignments; a native student label alone never establishes BMA identity. */
     public function confirmReviewedHousehold(string $stripeCustomerId, string $waiverLocator, int $payerPerson, int $signerPerson, int $studentPerson, int $adminUserId, bool $confirmSourceRelationship): void
     {
         if ($payerPerson < 1 || $signerPerson < 1 || $studentPerson < 1 || $adminUserId < 1) { throw new RuntimeException('INVALID_REVIEWED_HOUSEHOLD'); }

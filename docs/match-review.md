@@ -27,3 +27,12 @@ Open queue includes `possible`, `unmatched`, and `conflict`. Confirmed and rejec
 ## Focused validation
 
 On a disposable database populated from the four supplied shelled CSVs, the page query found the two saved candidate roles. Tested search and rendered HTML escaping, defer/reject/reopen, preservation of a manual hold across a matcher rerun, same-person confirmation and undo, separate-person creation and undo, linking an existing person and undo, payer/member relationship and undo, and actor/before/after/notes audit history. The separate-person and relationship decisions were synthetic administrator choices over normalized records imported from the CSVs in the **test database only**; they are not assertions about the real people in the CSV. A separate adult self-payer fixture confirmed student/member and self relationship creation and undo while preserving the payer and signer links that existed before the action. PHP syntax checks passed. No Step 5 work was started.
+
+
+## Explicit native student labels — 2026-11-02
+
+For bma2_v1/student source metadata, the non-signer candidate is displayed as **Student comparison** and **STUDENT (SOURCE LABEL)**. The BMA identity is separately labeled unverified until an administrator-confirmed student identity link exists with recorded reviewer/time. The parent/payer is not assumed to be this student. Household email/phone/address ownership remains unverified. Legacy source names continue to display Form Name role unresolved / UNRESOLVED NAME.
+
+The internal source_name_unresolved candidate value, unique keys, action semantics, authorization, audit and undo safeguards are unchanged. Queue projection now includes trusted native labels and a read-only administrator-confirmation indicator. Existing saved evidence/reasons using historical role-ambiguity codes receive context-appropriate labels; no data, score, rejection or audit history is rewritten by viewing the page. Student-name labeling is not permission to create people, members, relationships or accepted identity links. Those remain explicit, audited administrator actions.
+
+Read-only validation and exact test commands are in [native-student-matching-validation.md](native-student-matching-validation.md). No database migration is needed for this correction.

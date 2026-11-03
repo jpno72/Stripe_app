@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 if (PHP_SAPI !== 'cli') { exit(1); }
+// Safe validation entry point: never invokes the legacy write-mode matcher scenarios.
+if(in_array('--dry-run-only',$argv,true)){require __DIR__.'/native-student-matching.php';exit;}
 require dirname(__DIR__) . '/app/Matching/bootstrap.php';
 require dirname(__DIR__) . '/src/People.php';
 

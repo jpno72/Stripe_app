@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/WaiverSourceRole.php';
 
 /** Pure scorer. Evidence contains comparison codes, never source values. */
 final class MatchScorer
@@ -33,7 +34,13 @@ final class MatchScorer
         $relationship = $this->name($waiver['relationship'] ?? null);
         $sourceName = $this->name($waiver['source_name'] ?? null);
         $signerName = $this->name($waiver['signer_name'] ?? null);
-        if ($role === 'source_name_unresolved') { $conflicts[] = 'source_name_role_unverified'; }
+        $studentSource=WaiverSourceRole::isStudent($waiver);
+        if ($role === 'source_name_unresolved') {
+            if ($studentSource) {
+                $signals[]='explicit_student_name';
+                if(empty($waiver['student_identity_reviewed']))$conflicts[]='student_identity_unverified';
+            } else $conflicts[]='source_name_role_unverified';
+        }
         if ($relationship === 'self' && $sourceName !== '' && $signerName !== '' && $sourceName !== $signerName) { $conflicts[] = 'self_label_names_disagree'; }
         if (in_array($relationship, ['mother','father','parent','guardian','grandparent'], true) && $sourceName !== '' && $signerName !== '' && $sourceName !== $signerName) {
             $signals[] = 'possible_parent_student_structure';
@@ -41,6 +48,7 @@ final class MatchScorer
         $score = max(0, min(100, $points)) / 100;
         $hardConflict = in_array('conflicting_birth_date', $conflicts, true)
             || in_array('source_name_role_unverified', $conflicts, true)
+            || in_array('student_identity_unverified', $conflicts, true)
             || in_array('self_label_names_disagree', $conflicts, true);
         $method = in_array('exact_full_name', $signals, true) && in_array('exact_email', $signals, true) ? 'name_email'
             : (in_array('exact_full_name', $signals, true) && in_array('exact_phone', $signals, true) ? 'name_phone'
@@ -48,6 +56,7 @@ final class MatchScorer
             : (in_array('exact_full_name', $signals, true) ? 'exact_name' : 'weak_or_none')));
         if (in_array('conflicting_birth_date', $conflicts, true)) { $reason = 'conflicting_birth_date'; }
         elseif (in_array('self_label_names_disagree', $conflicts, true)) { $reason = 'self_label_names_disagree'; }
+        elseif (in_array('student_identity_unverified', $conflicts, true)) { $reason = 'student_identity_unverified'; }
         elseif (in_array('source_name_role_unverified', $conflicts, true)) { $reason = 'source_name_role_unverified'; }
         elseif ($conflicts !== []) { $reason = 'contact_or_name_conflict'; }
         elseif ($score >= 0.9) { $reason = 'multiple_strong_signals'; }
@@ -55,7 +64,9 @@ final class MatchScorer
         else { $reason = 'insufficient_evidence'; }
         return ['score'=>$score, 'method'=>$method, 'reason'=>$reason, 'hard_conflict'=>$hardConflict,
             'evidence'=>['signals'=>array_values(array_unique($signals)), 'conflicts'=>array_values(array_unique($conflicts)),
-                'contact_owner_verified'=>false, 'role'=>$role]];
+                'contact_owner_verified'=>false, 'role'=>$role,
+                'source_name_role'=>$studentSource?'student':'unresolved',
+                'student_identity_reviewed'=>$studentSource&&!empty($waiver['student_identity_reviewed'])]];
     }
 
     private function compare(?string $left, ?string $right, string $signal, int $weight, int &$points, array &$signals): void
