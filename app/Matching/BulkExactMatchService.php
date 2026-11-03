@@ -108,7 +108,7 @@ final class BulkExactMatchService
                 if(self::selfStudent($w,$key)){
                     // An explicit Self claim with a known different student identity is contradictory even for Rule A.
                     $scopes['cognito/waiver/'.$w['source_locator'].'/student']=$w['student_person_id'];
-                    if($hasStudent&&$w['student_birth_date']!==null){$dobs[$w['student_birth_date']]=true;$dob=new DateTimeImmutable($w['student_birth_date']);$today=new DateTimeImmutable(AppTime::today());if($dob>$today||$dob->diff($today)->y<18)$blocked='self_student_age_conflict';}
+                    if(($hasStudent||$w['student_person_id']!==null)&&$w['student_birth_date']!==null)$dobs[$w['student_birth_date']]=true;
                 }
             }
             foreach($scopes as $scope=>$cached){
@@ -131,7 +131,7 @@ final class BulkExactMatchService
                     $g['person_bma']=$p['bma_person_id'];
                     $full=trim(implode(' ',[$p['first_name']??'',$p['middle_name']??'',$p['last_name']??'']));$sample=$customers[$g['decisions'][0]['customer_id']];
                     if((self::name($full)!==''&&self::name($full)!==self::name($sample['name']))||(($email=self::email($p['email_normalized']??$p['email']))!==''&&$email!==self::email($sample['email_normalized']??$sample['email'])))$blocked??='existing_person_evidence_conflict';
-                    if($hasStudent&&$p['birth_date']!==null)$dobs[$p['birth_date']]=true;
+                    if(($hasStudent||$dobs!==[])&&$p['birth_date']!==null)$dobs[$p['birth_date']]=true;
                 }
             }
             if($person===null){$sample=$customers[$g['decisions'][0]['customer_id']];$parts=explode(' ',trim(preg_replace('/[\s\p{Z}]+/u',' ',(string)$sample['name'])??''));$first=array_shift($parts);$last=implode(' ',$parts);if($first===''||mb_strlen($first,'UTF-8')>100||mb_strlen($last,'UTF-8')>100)$blocked??='person_name_requires_manual';}
@@ -154,20 +154,34 @@ final class BulkExactMatchService
                 $allowed=$d['rule']==='B'?['student_identity_unverified','source_name_role_unverified']:[];
                 if(!is_array($conflicts)||array_diff($conflicts,$allowed)!==[]||((bool)$c['hard_conflict']&&($conflicts===[]||$d['rule']!=='B')))$blocked??='hard_or_contradictory_evidence';
             }
+            $g['person_id']=$person;$g['student_dobs']=array_keys($dobs);
             if($blocked!==null){foreach($g['decisions'] as $d)$excluded[$d['id']]=$blocked;$g['excluded_reason']=$blocked;continue;}
-            $summary['people_to_'.($person===null?'create':'reuse')]++;
-            if($hasStudent&&($person===null||!isset($members[$person])))$summary['members_to_create']++;
-            $selectedWaivers=[];$selectedScopes=[];
-            foreach($g['decisions'] as $d){
-                $summary['eligible_candidates']++;$summary[$d['rule']==='A'?'payer_signer_candidates':'self_student_candidates']++;
-                $w=$waivers[$d['waiver_id']];$c=$customers[$d['customer_id']];$selectedWaivers[$w['id']]=true;
-                $selectedScopes['stripe/customer/'.$c['stripe_customer_id'].'/customer']=true;$selectedScopes['cognito/waiver/'.$w['source_locator'].'/signer']=true;
-                if($d['rule']==='B')$selectedScopes['cognito/waiver/'.$w['source_locator'].'/student']=true;
-            }
-            $summary['additional_waivers']+=max(0,count($selectedWaivers)-1);
-            foreach($selectedScopes as $scope=>$_){$confirmed=false;foreach($links[$scope]??[] as $link)if($link['match_status']==='confirmed')$confirmed=true;if(!$confirmed)$summary['associations_to_confirm']++;}
         }unset($g);
         foreach($groups as $key=>$g)if(isset($g['excluded_reason']))unset($groups[$key]);
+        // Compatible accepted people may span different email groups. Count and validate them globally.
+        $personKeys=[];$personDobs=[];
+        foreach($groups as $key=>$g)if($g['person_id']!==null){$personKeys[$g['person_id']][]=$key;foreach($g['student_dobs'] as $dob)$personDobs[$g['person_id']][$dob]=true;}
+        foreach($personDobs as $id=>$dates){
+            $reason=count($dates)>1?'conflicting_birth_dates':null;$student=false;
+            foreach($personKeys[$id] as $key)foreach($groups[$key]['decisions'] as $d)if($d['rule']==='B')$student=true;
+            if($student&&$reason===null)foreach(array_keys($dates) as $birth){$dob=new DateTimeImmutable($birth);$today=new DateTimeImmutable(AppTime::today());if($dob>$today||$dob->diff($today)->y<18)$reason='self_student_age_conflict';}
+            if($reason!==null)foreach($personKeys[$id] as $key){foreach($groups[$key]['decisions'] as $d)$excluded[$d['id']]=$reason;unset($groups[$key]);}
+        }
+        foreach(['eligible_candidates','payer_signer_candidates','self_student_candidates','people_to_create','people_to_reuse','members_to_create','additional_waivers','associations_to_confirm'] as $metric)$summary[$metric]=0;
+        $reused=[];$newMembers=[];$identityWaivers=[];$allScopes=[];
+        foreach($groups as $key=>$g){
+            $identity=$g['person_id']===null?'group:'.$key:'person:'.$g['person_id'];
+            if($g['person_id']===null)$summary['people_to_create']++;else $reused[$g['person_id']]=true;
+            foreach($g['decisions'] as $d){
+                $summary['eligible_candidates']++;$summary[$d['rule']==='A'?'payer_signer_candidates':'self_student_candidates']++;
+                $w=$waivers[$d['waiver_id']];$c=$customers[$d['customer_id']];$identityWaivers[$identity][$w['id']]=true;
+                $allScopes['stripe/customer/'.$c['stripe_customer_id'].'/customer']=true;$allScopes['cognito/waiver/'.$w['source_locator'].'/signer']=true;
+                if($d['rule']==='B'){$allScopes['cognito/waiver/'.$w['source_locator'].'/student']=true;if($g['person_id']===null||!isset($members[$g['person_id']]))$newMembers[$identity]=true;}
+            }
+        }
+        $summary['people_to_reuse']=count($reused);$summary['members_to_create']=count($newMembers);
+        foreach($identityWaivers as $submissions)$summary['additional_waivers']+=max(0,count($submissions)-1);
+        foreach($allScopes as $scope=>$_){$confirmed=false;foreach($links[$scope]??[] as $link)if($link['match_status']==='confirmed')$confirmed=true;if(!$confirmed)$summary['associations_to_confirm']++;}
         foreach($excluded as $reason)$reasons[$reason]=($reasons[$reason]??0)+1;ksort($reasons);ksort($groups);
         $summary['excluded_candidates']=count($excluded);$summary['remaining_manual']=0;foreach($data['identity_match_candidates'] as $c)if(isset($excluded[(int)$c['id']])&&$c['match_status']!=='rejected')$summary['remaining_manual']++;
         return ['digest'=>hash('sha256',json_encode(['policy'=>'exact_name_email_v1','today'=>AppTime::today(),'data'=>$data],JSON_THROW_ON_ERROR)),'summary'=>$summary,'exclusions'=>$reasons,'groups'=>$groups];

@@ -10,13 +10,15 @@ Rule B additionally requires source_format=bma2_v1, source_name_role=student, th
 
 Parent/child student comparisons, legacy unresolved source-name comparisons, email-only/name-only matches and nonexact names are excluded. A parent's exact signer comparison can still qualify under A without touching the child. If a group also contains a qualifying student comparison, all relevant identity evidence must remain compatible. The source-label uncertainty flags student_identity_unverified/source_name_role_unverified alone may be resolved by Rule B's explicit criteria; other hard/contradictory evidence blocks bulk review.
 
+Existing accepted people spanning different exact-email groups are counted once for person reuse and membership creation. DOB conflicts are checked across all such groups, including accepted Self-student records; any contradictory person is excluded as a whole.
+
 Repeated waivers and multiple distinct Stripe customer rows with the same exact normalized name/email form a temporary decision group, not a permanent email master identity. Each group uses one unambiguous accepted BMA person or one unique existing BMA person with the exact name/email. Multiple existing people, contradictory existing person name/email/DOB, authoritative-link/cache disagreement, rejected identity links, manual holds, conflicting candidate statuses or rejected/deferred relevant decisions exclude the group. Compatible confirmed candidates are left unchanged and their accepted person may be reused. Only records represented by eligible candidate decisions receive new associations; other same-key records provide conflict/reuse evidence and are not silently linked.
 
 New people use People/AUTO_INCREMENT and immutable BMA IDs. Only the source name is allocated: no shared email, phone, address, birth date or household relationship is copied automatically. Source names too long for current People columns are excluded in preview. Member status/start date retain existing unknown/NULL defaults; financial, subscription and original Cognito source values are unchanged. Authoritative reviewed identity links and their normalized person caches are synchronized by IdentityAssociations.
 
 ## UI and count meanings
 
-The administrator-only Matches queue links to /admin/bulk-matches.php. GET computes a read-only consistent preview across the entire queue, independent of queue filters. It shows candidate totals, A/B breakdown, unique people to create/reuse, members to create, additional distinct waivers beyond the first in each group, identity scopes to confirm/promote, excluded records by primary reason and remaining open manual-review records. Counts are candidate records, not necessarily unique people; two comparison roles can refer to one waiver/person. Excluded counts include protected rejections; remaining manual excludes already rejected candidates. Already accepted counts cover confirmed/linked candidates left unchanged.
+The administrator-only Matches queue links to /admin/bulk-matches.php. GET computes a read-only consistent preview across the entire queue, independent of queue filters. It shows candidate totals, A/B breakdown, unique people to create/reuse, members to create, additional distinct waivers beyond the first per existing/proposed person, identity scopes to confirm/promote, excluded records by primary reason and remaining open manual-review records. Counts are candidate records, not necessarily unique people; two comparison roles can refer to one waiver/person. Excluded counts include protected rejections; remaining manual excludes already rejected candidates. Already accepted counts cover confirmed/linked candidates left unchanged.
 
 The confirmation panel explicitly states the number of candidate decisions, people, members and identity associations affected. An unchecked required acknowledgment and a separate authenticated POST are mandatory. No JavaScript is required. The POST uses existing CSRF protection, a cryptographically generated operation ID, displayed-count validation, and a server-session preview tied to the actor and expiring after 15 minutes. Neither candidate IDs nor eligibility supplied by the browser is trusted.
 
@@ -34,14 +36,14 @@ The implementation deliberately bounds candidate scope to 1,000 rows and source/
 
 | Suite | Passed assertions |
 |---|---:|
-| tests/bulk-exact-matches.php | 61 |
+| tests/bulk-exact-matches.php | 66 |
 | tests/match-review-presentation.php | 214 |
 | Native matching/manual review/HTTP charset | 49 |
 | Existing security regression | 31 |
 | Existing dashboard-access regression | 28 |
 | Existing Cognito compatibility regression | 76 |
 | Actual Chromium review/bulk layout and confirmation checks | 57 |
-| Total | 516 |
+| Total | 521 |
 
 Bulk tests create/drop only their own random localhost disposable database using current migrations. They cover exact name/email normalization, Unicode whitespace, A-only identity boundaries, native Self membership, parent/child separation, missing/invalid/nonexact fields, household email with different names, repeated waivers, duplicate Stripe accounts, existing people, duplicate-existing-person exclusion, DOB/minor conflicts, contradictory evidence, confirmed/rejected/deferred decisions, automatic-link promotion/reopen, accepted-link/cache drift, audit provenance, dependent undo, stale source/hold changes after preview, actual second-connection mutex exclusion, injected partial failure/rollback/retry, idempotent receipts, inactive users, viewer/analyst denial, direct unauthenticated access, CSRF, tampered counts, valid confirmed POST and duplicate POST, plus dashboard DENY.
 
