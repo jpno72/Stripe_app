@@ -91,7 +91,7 @@ function renderMatchReview(array $queue, string $search, string $status, int $pa
         <header class="review-page-header">
             <div><p class="eyebrow">BMA ANALYTICS / IDENTITY REVIEW</p><h1>Identity match review</h1>
                 <p>Compare payer and waiver records. Confirm identities and relationships with an auditable decision.</p></div>
-            <div class="review-header-actions"><a class="btn btn-primary" href="/admin/bulk-matches.php">Bulk Confirm Exact Matches</a><div class="review-total"><strong><?= e(number_format((int)$queue['total'])) ?></strong><span>candidates found</span></div></div>
+            <div class="review-header-actions"><a class="btn btn-primary" href="/admin/bulk-matches.php?mode=score">Bulk Confirm Matches Above 50%</a><a class="btn btn-outline-secondary" href="/admin/bulk-matches.php">Bulk Confirm Exact Matches</a><div class="review-total"><strong><?= e(number_format((int)$queue['total'])) ?></strong><span>candidates found</span></div></div>
         </header>
         <?php foreach (['match_review_notice'=>'success', 'match_review_error'=>'danger'] as $key=>$type): ?>
             <?php if (isset($_SESSION[$key])): ?><div class="alert alert-<?= e($type) ?>" role="<?= $type === 'danger' ? 'alert' : 'status' ?>"><?= e($_SESSION[$key]) ?></div><?php unset($_SESSION[$key]); endif; ?>

@@ -5,6 +5,7 @@ declare(strict_types=1);
 final class IdentityAssociations
 {
     private bool $batchMode = false;
+    private array $bulkContext = [];
     public function __construct(private PDO $db) {}
 
     /** Apply related reviewed role decisions and relationships atomically. */
@@ -29,7 +30,14 @@ final class IdentityAssociations
             $this->db->commit();
             return $result;
         } catch (Throwable $e) { $this->db->rollBack(); throw $e; }
-        finally { $this->batchMode = false; }
+        finally { $this->batchMode = false; $this->bulkContext = []; }
+    }
+
+    /** Attach code-only bulk provenance to every authoritative association audit in this transaction. */
+    public function setBulkContext(string $operation,string $policy): void
+    {
+        if(!$this->batchMode||!preg_match('/\A[a-f0-9]{32}\z/D',$operation)||!in_array($policy,['exact_name_email_v1','score_above_half_v1'],true))throw new RuntimeException('INVALID_BULK_CONTEXT');
+        $this->bulkContext=['operation_id'=>$operation,'policy'=>$policy];
     }
 
     /** Accepted-row snapshots support explicit bulk confirmation and reversible automatic-link promotion. */
@@ -224,6 +232,7 @@ final class IdentityAssociations
 
     private function audit(?int $actor, string $action, string $type, ?string $id, array $metadata): void
     {
+        if($this->bulkContext!==[])$metadata['bulk_operation']=$this->bulkContext;
         $q = $this->db->prepare('INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, metadata) VALUES (?, ?, ?, ?, ?)');
         $q->execute([$actor, $action, $type, $id, json_encode($metadata, JSON_THROW_ON_ERROR)]);
     }

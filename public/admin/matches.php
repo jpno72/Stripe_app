@@ -44,6 +44,6 @@ try { $queue = $service->queue($search,$status,$page); }
 catch (RuntimeException) { $search = ''; $status = 'open'; $page = 1; $queue = $service->queue(); }
 
 require_once APP_ROOT . '/app/Views/match-review.php';
-adminHead('Identity match review', ['/assets/css/match-review.css?v=3']);
+adminHead('Identity match review', ['/assets/css/match-review.css?v=4']);
 renderMatchReview($queue, $search, $status, $page, fn(int $id): array => $service->history($id));
 adminFoot();

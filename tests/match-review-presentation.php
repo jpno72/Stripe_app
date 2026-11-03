@@ -35,12 +35,12 @@ function fixtureRender(array $rows, callable $history): string {
     ob_start();uiLayoutStart('Identity match review','matches','',['/assets/css/match-review.css?v=2']);
     echo '<div class="admin-page">';renderMatchReview(['rows'=>$rows,'total'=>count($rows)],'', 'all',1,$history);echo '</div>';uiLayoutEnd();return (string)ob_get_clean();
 }
-function fixtureBulk(int $eligible): string {
-    $summary=['total_candidates'=>12,'eligible_candidates'=>$eligible,'payer_signer_candidates'=>4,'self_student_candidates'=>4,'people_to_create'=>2,'people_to_reuse'=>1,'members_to_create'=>2,'additional_waivers'=>3,'associations_to_confirm'=>9,'excluded_candidates'=>4,'already_decided'=>0,'remaining_manual'=>4];
-    $preview=['summary'=>$summary,'exclusions'=>['student_rule_not_met'=>4]];$pending=['operation'=>str_repeat('a',32)];
-    ob_start();uiLayoutStart('Bulk confirm exact matches','matches','',['/assets/css/match-review.css?v=3']);echo '<div class="admin-page">';renderBulkMatchPreview($preview,$pending);echo '</div>';uiLayoutEnd();return (string)ob_get_clean();
+function fixtureBulk(int $eligible,string $policy='exact_name_email_v1'): string {
+    $summary=['total_candidates'=>12,'eligible_candidates'=>$eligible,'payer_signer_candidates'=>4,'self_student_candidates'=>4,'people_to_create'=>2,'people_to_reuse'=>1,'members_to_create'=>2,'additional_waivers'=>3,'associations_to_confirm'=>9,'excluded_candidates'=>4,'already_decided'=>0,'remaining_manual'=>4,'score_above_half'=>12,'score_qualified_excluded'=>4,'excluded_groups'=>2];
+    $preview=['summary'=>$summary,'exclusions'=>['student_rule_not_met'=>4],'review_groups'=>[['reason'=>'student_role_separation','candidate_ids'=>[21,22]],['reason'=>'competing_source_names','candidate_ids'=>[31,32]]]];$pending=['operation'=>str_repeat('a',32)];
+    ob_start();uiLayoutStart('Bulk confirm exact matches','matches','',['/assets/css/match-review.css?v=3']);echo '<div class="admin-page">';renderBulkMatchPreview($preview,$pending,null,null,$policy);echo '</div>';uiLayoutEnd();return (string)ob_get_clean();
 }
-$bulkHtml=fixtureBulk(8);$bulkEmpty=fixtureBulk(0);
+$bulkHtml=fixtureBulk(8);$bulkEmpty=fixtureBulk(0);$scoreHtml=fixtureBulk(8,'score_above_half_v1');$scoreEmpty=fixtureBulk(0,'score_above_half_v1');
 $before=serialize([$rows,$events]);$html=fixtureRender($rows,$history);$empty=fixtureRender([],$history);
 $checks=0;$check=function(bool $ok,string $label)use(&$checks):void{if(!$ok)throw new RuntimeException('FAIL '.$label);++$checks;echo 'PASS '.$label.PHP_EOL;};
 $doc=new DOMDocument();@$doc->loadHTML($html);$x=new DOMXPath($doc);
@@ -70,5 +70,9 @@ $check(str_contains($html,'href="/admin/bulk-matches.php"'),'bulk preview linked
 $check(str_contains($bulkHtml,'Confirm 8 exact matches')&&str_contains($bulkHtml,'Read-only preview'),'bulk preview displays explicit confirmation count');
 $check(str_contains($bulkHtml,'name="csrf"')&&str_contains($bulkHtml,'name="confirm_exact"')&&str_contains($bulkHtml,'name="operation_id"'),'bulk form preserves CSRF, operation nonce and explicit confirmation');
 $check(!str_contains($bulkEmpty,'type="submit"')||substr_count($bulkEmpty,'type="submit"')===1,'zero eligible preview has no bulk submit (shared logout only)');
-$out=getenv('BMA_REVIEW_RENDER_DIR');if($out!==false&&$out!==''){if(!is_dir($out))throw new RuntimeException('Existing private render directory required');file_put_contents($out.'/matches.html',$html);file_put_contents($out.'/empty.html',$empty);file_put_contents($out.'/bulk.html',$bulkHtml);file_put_contents($out.'/bulk-empty.html',$bulkEmpty);}
+$check(str_contains($html,'Bulk Confirm Matches Above 50%')&&str_contains($html,'?mode=score'),'score workflow linked separately from exact workflow');
+$check(str_contains($scoreHtml,'Candidates with stored score above 0.50')&&str_contains($scoreHtml,'Score-qualified candidates excluded'),'score-qualified counts clearly distinguished from safe decisions');
+$check(str_contains($scoreHtml,'Separate role and conflict review groups')&&str_contains($scoreHtml,'21, 22'),'role separation review groups identify retained candidates');
+$check(str_contains($scoreHtml,'name="policy" value="score_above_half_v1"')&&str_contains($scoreHtml,'data-confirm-bulk="Confirm 8 candidate decisions?'),'score form binds policy and explicit numerical confirmation');
+$out=getenv('BMA_REVIEW_RENDER_DIR');if($out!==false&&$out!==''){if(!is_dir($out))throw new RuntimeException('Existing private render directory required');file_put_contents($out.'/matches.html',$html);file_put_contents($out.'/empty.html',$empty);file_put_contents($out.'/bulk.html',$bulkHtml);file_put_contents($out.'/bulk-empty.html',$bulkEmpty);file_put_contents($out.'/score.html',$scoreHtml);file_put_contents($out.'/score-empty.html',$scoreEmpty);}
 echo 'Presentation checks: '.$checks.PHP_EOL;
