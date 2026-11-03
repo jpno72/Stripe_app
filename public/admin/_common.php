@@ -30,10 +30,10 @@ function adminReviewActor(PDO $db,array $config): int
     $user=(new SessionCurrentUserProvider($db,$config))->current();if(!$user||$user['role']!=='admin'){http_response_code(403);exit('Administrator access is required.');}return (int)$user['id'];
 }
 
-function adminHead(string $title): void
+function adminHead(string $title, array $styles = []): void
 {
     $active = basename((string) ($_SERVER['SCRIPT_NAME'] ?? '')) === 'matches.php' ? 'matches' : 'imports';
-    uiLayoutStart($title, $active);
+    uiLayoutStart($title, $active, '', $styles);
     echo '<div class="admin-page">';
 }
 

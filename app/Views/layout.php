@@ -40,6 +40,7 @@ function uiIcon(string $name): string
 
 function uiLayoutStart(string $title, string $active, string $description = '', array $styles = []): void
 {
+    header('Content-Type: text/html; charset=UTF-8');
     $allNavigation = uiNavigation();
     $navigation = [];
     $service = $GLOBALS['bma_dashboard_permissions'] ?? null;
@@ -55,8 +56,8 @@ function uiLayoutStart(string $title, string $active, string $description = '', 
     $label = $allNavigation[$active][0];
     $user = (string) ($GLOBALS['bma_current_user']['display_name'] ?? 'BMA team');
     echo '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">';
-    echo '<meta name="color-scheme" content="light"><title>' . uiEscape($title) . ' · BMA Analytics</title>';
-    echo '<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">';
+    echo '<meta name="color-scheme" content="light"><title>' . uiEscape($title) . ' &middot; BMA Analytics</title>';
+    echo '<link href="/assets/vendor/bootstrap/5.3.3/bootstrap.min.css" rel="stylesheet">';
     echo '<link href="/assets/css/app.css" rel="stylesheet">';
     foreach ($styles as $style) { echo '<link href="' . uiEscape($style) . '" rel="stylesheet">'; }
     echo '</head><body><div class="app-shell">';
@@ -69,7 +70,7 @@ function uiLayoutStart(string $title, string $active, string $description = '', 
 
 function uiLayoutEnd(): void
 {
-    echo '</div></main><footer class="app-footer">Bloomsburg Martial Arts Academy <span aria-hidden="true">·</span> Internal analytics</footer></div></div>';
+    echo '</div></main><footer class="app-footer">Bloomsburg Martial Arts Academy <span aria-hidden="true">&middot;</span> Internal analytics</footer></div></div>';
     echo '<div class="sidebar-backdrop" data-sidebar-close></div>';
-    echo '<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" defer></script><script src="/assets/js/app.js" defer></script></body></html>';
+    echo '<script src="/assets/vendor/bootstrap/5.3.3/bootstrap.bundle.min.js" defer></script><script src="/assets/js/app.js" defer></script></body></html>';
 }
