@@ -34,26 +34,27 @@ final class BulkExactMatchService
         if(!$q->fetchColumn())throw new RuntimeException('ADMIN_REVIEW_REQUIRED');
     }
     /** SELECT-only consistent preview; even the plan fingerprint is not persisted in the database. */
-    public function preview(int $actor): array
+    public function preview(int $actor,?array $selection=null): array
+    {
+        return $this->reviewState($actor,$selection)['plan'];
+    }
+    /** Approved identity fields for read-only grouped presentation; no raw source JSON. */
+    public function reviewState(int $actor,?array $selection=null): array
     {
         if($this->db->inTransaction())throw new RuntimeException('BULK_TRANSACTION_REQUIRED');
         $this->db->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');$this->db->beginTransaction();
-        try{$this->admin($actor);$plan=$this->plan($this->load(false));$this->db->commit();return $plan;}
+        try{$this->admin($actor);$data=$this->load(false);$plan=$this->plan($data,$selection);$this->db->commit();return ['data'=>$data,'plan'=>$plan];}
         catch(Throwable $e){$this->db->rollBack();throw $e;}
     }
     /** Global per-database mutex plus ordered InnoDB row/gap locks protect concurrent bulk/import/manual changes. */
-    public function confirm(int $actor,string $operation,string $expectedDigest): array
+    public function confirm(int $actor,string $operation,string $expectedDigest,?array $selection=null): array
     {
         if(!preg_match('/\A[a-f0-9]{32}\z/D',$operation)||!preg_match('/\A[a-f0-9]{64}\z/D',$expectedDigest)||$this->db->inTransaction())throw new RuntimeException('INVALID_BULK_PREVIEW');
-        $lockName='bma_bulk_exact_'.substr(hash('sha256',(string)$this->db->query('SELECT DATABASE()')->fetchColumn()),0,40);
-        $q=$this->db->prepare('SELECT GET_LOCK(?,0)');$q->execute([$lockName]);if((int)$q->fetchColumn()!==1)throw new RuntimeException('BULK_BUSY');
-        try{
-            $this->db->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
-            return (new IdentityAssociations($this->db))->transaction(function(IdentityAssociations $identity)use($actor,$operation,$expectedDigest):array{
-                $this->admin($actor,true);
+        $selection=$this->normalizeSelection($selection);
+        return $this->reviewTransaction($actor,function(IdentityAssociations $identity)use($actor,$operation,$expectedDigest,$selection):array{
                 $q=$this->db->prepare("SELECT actor_user_id,metadata FROM audit_log WHERE entity_type='identity_bulk_operations' AND entity_id=? AND action='identity_bulk_confirmed' ORDER BY id LIMIT 1 FOR UPDATE");$q->execute([$operation]);$receipt=$q->fetch();
-                if($receipt){$meta=json_decode($receipt['metadata'],true,512,JSON_THROW_ON_ERROR);if((int)$receipt['actor_user_id']!==$actor||($meta['policy']??self::EXACT)!==$this->policy||!hash_equals($meta['preview_digest'],$expectedDigest))throw new RuntimeException('INVALID_BULK_PREVIEW');return $meta['summary']+['replayed'=>true];}
-                $plan=$this->plan($this->load(true));
+                if($receipt){$meta=json_decode($receipt['metadata'],true,512,JSON_THROW_ON_ERROR);if(($meta['selection']??null)!==$selection||(int)$receipt['actor_user_id']!==$actor||($meta['policy']??self::EXACT)!==$this->policy||!hash_equals($meta['preview_digest'],$expectedDigest))throw new RuntimeException('INVALID_BULK_PREVIEW');return $meta['summary']+['replayed'=>true];}
+                $plan=$this->plan($this->load(true),$selection);
                 if(!hash_equals($expectedDigest,$plan['digest']))throw new RuntimeException('BULK_PREVIEW_STALE');
                 if($plan['summary']['eligible_candidates']===0)throw new RuntimeException('BULK_NO_ELIGIBLE');
                 $identity->setBulkContext($operation,$this->policy);
@@ -66,16 +67,37 @@ final class BulkExactMatchService
                     }
                 }
                 $q=$this->db->prepare('INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES (?,?,?,?,?)');
-                $q->execute([$actor,'identity_bulk_confirmed','identity_bulk_operations',$operation,json_encode(['preview_digest'=>$expectedDigest,'summary'=>$plan['summary'],'policy'=>$this->policy],JSON_THROW_ON_ERROR)]);
+                $q->execute([$actor,'identity_bulk_confirmed','identity_bulk_operations',$operation,json_encode(['preview_digest'=>$expectedDigest,'summary'=>$plan['summary'],'policy'=>$this->policy,'selection'=>$selection],JSON_THROW_ON_ERROR)]);
                 return $plan['summary']+['replayed'=>false];
-            });
-        }finally{$q=$this->db->prepare('SELECT RELEASE_LOCK(?)');$q->execute([$lockName]);}
+        });
+    }
+    /** Shared mutex/transaction boundary for bulk and person-centered administrative decisions. */
+    public function reviewTransaction(int $actor,callable $work): mixed
+    {
+        if($this->db->inTransaction())throw new RuntimeException('BULK_TRANSACTION_REQUIRED');
+        $lockName='bma_bulk_exact_'.substr(hash('sha256',(string)$this->db->query('SELECT DATABASE()')->fetchColumn()),0,40);
+        $q=$this->db->prepare('SELECT GET_LOCK(?,0)');$q->execute([$lockName]);if((int)$q->fetchColumn()!==1)throw new RuntimeException('BULK_BUSY');
+        try{$this->db->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');return(new IdentityAssociations($this->db))->transaction(function(IdentityAssociations $identity)use($actor,$work){$this->admin($actor,true);return $work($identity);});}
+        finally{$q=$this->db->prepare('SELECT RELEASE_LOCK(?)');$q->execute([$lockName]);}
+    }
+    public function lockedReviewState(): array
+    {
+        if(!$this->db->inTransaction())throw new RuntimeException('REVIEW_TRANSACTION_REQUIRED');
+        $data=$this->load(true);return ['data'=>$data,'plan'=>$this->plan($data)];
+    }
+    public static function identityKey(?string $name,?string $email): ?string { return self::key($name,$email); }
+    private function normalizeSelection(?array $selection): ?array
+    {
+        if($selection===null)return null;
+        if(!array_is_list($selection)||count($selection)>1000)throw new RuntimeException('INVALID_BULK_SELECTION');
+        foreach($selection as $id)if(!is_int($id)||$id<1)throw new RuntimeException('INVALID_BULK_SELECTION');
+        $selection=array_values(array_unique($selection));sort($selection,SORT_NUMERIC);return $selection;
     }
     private function load(bool $lock): array
     {
         $fields=[
             'stripe_customers'=>'id,stripe_customer_id,name,email,email_normalized,person_id,updated_at',
-            'cognito_waivers'=>'id,source_locator,source_name,signer_print_name,contact_email,source_format,source_name_role,relationship_to_student,student_birth_date,signer_person_id,student_person_id,updated_at',
+            'cognito_waivers'=>'id,source_record_id,submitted_at,contact_phone,address_text,source_locator,source_name,signer_print_name,contact_email,source_format,source_name_role,relationship_to_student,student_birth_date,signer_person_id,student_person_id,updated_at',
             'identity_match_candidates'=>'id,stripe_customer_id,cognito_waiver_id,waiver_role,match_score,(match_score > 0.50) AS score_above_half,match_status,match_method,match_reason,evidence,hard_conflict,reviewed_by,reviewed_at,updated_at',
             'identity_links'=>'id,person_id,source_system,source_type,external_id,source_role,match_status,match_method,match_score,match_reason,match_evidence,reviewed_by,reviewed_at,updated_at',
             'people'=>'id,bma_person_id,first_name,middle_name,last_name,email,email_normalized,birth_date,updated_at',
@@ -95,7 +117,9 @@ final class BulkExactMatchService
         $n=$this->scoreNames[$key]??'';
         return $n!==''&&WaiverSourceRole::isStudent($waiver)&&self::name($waiver['relationship_to_student'])==='self'&&self::name($waiver['source_name'])===$n&&self::name($waiver['signer_print_name'])===$n;
     }
-    private function plan(array $data): array
+    /** Internal pure plan over a previously validated complete snapshot. */
+    public function planForState(array $data,?array $selection=null): array { return $this->plan($data,$selection); }
+    private function plan(array $data,?array $selection=null): array
     {
         $index=static fn(array $rows):array=>array_column($rows,null,'id');
         $customers=$index($data['stripe_customers']);$waivers=$index($data['cognito_waivers']);$people=$index($data['people']);$members=array_column($data['members'],'id','person_id');
@@ -121,7 +145,16 @@ final class BulkExactMatchService
             $groups[$key]['decisions'][]=['id'=>$id,'rule'=>$rule,'customer_id'=>(int)$c['stripe_customer_id'],'waiver_id'=>(int)$c['cognito_waiver_id']];
         }
         }
-        $reasons=[];$summary=['total_candidates'=>count($data['identity_match_candidates']),'eligible_candidates'=>0,'payer_signer_candidates'=>0,'self_student_candidates'=>0,'people_to_create'=>0,'people_to_reuse'=>0,'members_to_create'=>0,'additional_waivers'=>0,'associations_to_confirm'=>0,'excluded_candidates'=>0,'already_decided'=>$already,'remaining_manual'=>0];
+        $selection=$this->normalizeSelection($selection);
+        if($selection!==null){
+            $selected=array_fill_keys($selection,true);$found=0;$already=0;
+            foreach($data['identity_match_candidates'] as $c)if(isset($selected[(int)$c['id']])){++$found;if(in_array($c['match_status'],['confirmed','linked'],true))++$already;}
+            if($found!==count($selection))throw new RuntimeException('INVALID_BULK_SELECTION');
+            foreach($groups as $key=>&$g){$g['decisions']=array_values(array_filter($g['decisions'],fn($d)=>isset($selected[$d['id']])));if($g['decisions']===[])unset($groups[$key]);}unset($g);
+            $excluded=array_intersect_key($excluded,$selected);
+            if($score!==null)$score['above']=count(array_filter($data['identity_match_candidates'],fn($c)=>isset($selected[(int)$c['id']])&&!empty($c['score_above_half'])));
+        }
+        $reasons=[];$summary=['total_candidates'=>$selection===null?count($data['identity_match_candidates']):count($selection),'eligible_candidates'=>0,'payer_signer_candidates'=>0,'self_student_candidates'=>0,'people_to_create'=>0,'people_to_reuse'=>0,'members_to_create'=>0,'additional_waivers'=>0,'associations_to_confirm'=>0,'excluded_candidates'=>0,'already_decided'=>$already,'remaining_manual'=>0];
         foreach($groups as $key=>&$g){
             $blocked=$score['reasons'][$key]??null;$ids=[];$scopes=[];$dobs=[];$hasStudent=false;
             foreach($g['decisions'] as $d){$hasStudent=$hasStudent||$d['rule']==='B';}
@@ -217,6 +250,6 @@ final class BulkExactMatchService
             }}
             $summary['excluded_groups']=count($reviewGroups);
         }
-        return ['policy'=>$this->policy,'digest'=>hash('sha256',json_encode(['policy'=>$this->policy,'today'=>AppTime::today(),'data'=>$data],JSON_THROW_ON_ERROR)),'summary'=>$summary,'exclusions'=>$reasons,'groups'=>$groups,'review_groups'=>array_values($reviewGroups)];
+        return ['policy'=>$this->policy,'digest'=>hash('sha256',json_encode(['policy'=>$this->policy,'today'=>AppTime::today(),'data'=>$data,'selection'=>$selection],JSON_THROW_ON_ERROR)),'summary'=>$summary,'exclusions'=>$reasons,'groups'=>$groups,'review_groups'=>array_values($reviewGroups)];
     }
 }

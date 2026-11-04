@@ -96,7 +96,7 @@ function renderMatchReview(array $queue, string $search, string $status, int $pa
         <?php foreach (['match_review_notice'=>'success', 'match_review_error'=>'danger'] as $key=>$type): ?>
             <?php if (isset($_SESSION[$key])): ?><div class="alert alert-<?= e($type) ?>" role="<?= $type === 'danger' ? 'alert' : 'status' ?>"><?= e($_SESSION[$key]) ?></div><?php unset($_SESSION[$key]); endif; ?>
         <?php endforeach; ?>
-        <form method="get" class="review-filter" aria-label="Filter match candidates">
+        <form method="get" class="review-filter" aria-label="Filter match candidates"><input type="hidden" name="view" value="raw"><?php if(is_string($_GET['group']??null)): ?><input type="hidden" name="group" value="<?= e($_GET['group']) ?>"><?php endif; ?>
             <div class="review-field"><label for="q" class="form-label">Search people and records</label>
                 <input id="q" class="form-control" name="q" maxlength="100" value="<?= e($search) ?>" placeholder="Name, email, phone, Stripe ID or BMA ID"></div>
             <div class="review-field"><label for="status" class="form-label">Candidate status</label><select id="status" name="status" class="form-select">
@@ -184,9 +184,9 @@ function renderMatchReview(array $queue, string $search, string $status, int $pa
             </article>
         <?php endforeach; ?>
         <?php if ($queue['total'] > 25): ?><nav aria-label="Queue pages" class="review-pagination">
-            <?php if ($page > 1): ?><a class="btn btn-outline-secondary" href="?<?= e(http_build_query(['q'=>$search,'status'=>$status,'page'=>$page-1])) ?>">Previous</a><?php endif; ?>
+            <?php if ($page > 1): ?><a class="btn btn-outline-secondary" href="?<?= e(http_build_query(['view'=>'raw','group'=>$_GET['group']??null,'q'=>$search,'status'=>$status,'page'=>$page-1])) ?>">Previous</a><?php endif; ?>
             <span>Page <?= e($page) ?></span>
-            <?php if ($page*25 < $queue['total']): ?><a class="btn btn-outline-secondary" href="?<?= e(http_build_query(['q'=>$search,'status'=>$status,'page'=>$page+1])) ?>">Next</a><?php endif; ?>
+            <?php if ($page*25 < $queue['total']): ?><a class="btn btn-outline-secondary" href="?<?= e(http_build_query(['view'=>'raw','group'=>$_GET['group']??null,'q'=>$search,'status'=>$status,'page'=>$page+1])) ?>">Next</a><?php endif; ?>
         </nav><?php endif; ?>
     </div>
     <script src="/assets/js/match-review.js" defer></script>

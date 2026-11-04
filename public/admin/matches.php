@@ -34,14 +34,26 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     } catch (Throwable) {
         $_SESSION['match_review_error'] = 'The decision could not be saved. Review the candidate and linked people.';
     }
-    header('Location: matches.php',true,303); exit;
+    header('Location: matches.php?view=raw',true,303); exit;
 }
 
+require_once APP_ROOT.'/app/Matching/GroupedMatchReviewService.php';
+$grouped=new GroupedMatchReviewService($db);
+if(($_GET['view']??'')!=='raw'){
+    $search=is_string($_GET['q']??null)?trim($_GET['q']):'';$status=is_string($_GET['status']??null)?$_GET['status']:'open';$page=max(1,(int)($_GET['page']??1));
+    if(!in_array($status,['open','all','review','conflict','held','unmatched','confirmed','rejected'],true))$status='open';
+    try{$queue=$grouped->queue($actor,$search,$status,$page);}catch(Throwable){http_response_code(503);adminHead('Identity review unavailable');echo '<div class="alert alert-warning">The grouped review is temporarily unavailable. No records were changed.</div>';adminFoot();exit;}
+    require_once APP_ROOT.'/app/Views/grouped-match-review.php';adminHead('Identity match review',['/assets/css/match-review.css?v=5']);renderGroupedMatchReview($queue,$search,$status);adminFoot();exit;
+}
+$candidateIds=null;
+if(is_string($_GET['group']??null)){
+    try{$candidateIds=$grouped->preview($actor,$_GET['group'])['group']['candidate_ids'];}catch(Throwable){$candidateIds=[];}
+}
 $search = trim((string)($_GET['q'] ?? ''));
 $status = (string)($_GET['status'] ?? 'open');
 $page = max(1,(int)($_GET['page'] ?? 1));
-try { $queue = $service->queue($search,$status,$page); }
-catch (RuntimeException) { $search = ''; $status = 'open'; $page = 1; $queue = $service->queue(); }
+try { $queue = $service->queue($search,$status,$page,$candidateIds); }
+catch (RuntimeException) { $search = ''; $status = 'open'; $page = 1; $queue = $service->queue('','open',1,$candidateIds); }
 
 require_once APP_ROOT . '/app/Views/match-review.php';
 adminHead('Identity match review', ['/assets/css/match-review.css?v=4']);

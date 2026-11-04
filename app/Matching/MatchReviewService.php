@@ -10,7 +10,7 @@ final class MatchReviewService
 {
     public function __construct(private readonly PDO $db) {}
 
-    public function queue(string $search = '', string $status = 'open', int $page = 1): array
+    public function queue(string $search = '', string $status = 'open', int $page = 1,?array $candidateIds=null): array
     {
         $page = max(1, min($page, 10000));
         $statuses = [
@@ -20,6 +20,8 @@ final class MatchReviewService
         ];
         if (!array_key_exists($status, $statuses)) { throw new RuntimeException('INVALID_QUEUE_STATUS'); }
         $where = []; $params = [];
+        if($candidateIds!==null){if(count($candidateIds)>1000)throw new RuntimeException('INVALID_GROUP_SELECTION');foreach($candidateIds as $id)if(!is_int($id)||$id<1)throw new RuntimeException('INVALID_GROUP_SELECTION');$where[]=$candidateIds===[]?'1=0':'m.id IN ('.implode(',',array_fill(0,count($candidateIds),'?')).')';array_push($params,...$candidateIds);}
+
         if ($statuses[$status] !== []) {
             $where[] = 'm.match_status IN (' . implode(',', array_fill(0, count($statuses[$status]), '?')) . ')';
             array_push($params, ...$statuses[$status]);
@@ -58,10 +60,11 @@ final class MatchReviewService
     }
 
     /** Internal bulk orchestration hook; the supplied authoritative writer owns the outer transaction. */
-    public function decideInTransaction(IdentityAssociations $identity,int $candidateId,string $action,int $actor,array $input,array $bulk = []): void
+    public function decideInTransaction(IdentityAssociations $identity,int $candidateId,string $action,int $actor,array $input,array $bulk = [],array $groupContext = []): void
     {
         if (!$this->db->inTransaction() || !in_array($action,['confirm_same','confirm_relationship','link_existing','create_separate','reject','later','reopen'],true) || $candidateId<1 || $actor<1) { throw new RuntimeException('REVIEW_TRANSACTION_REQUIRED'); }
         if ($bulk!==[] && ($action!=='confirm_same' || !preg_match('/\A[a-f0-9]{32}\z/D',(string)($bulk['operation_id']??'')) || !in_array($bulk['rule']??null,['A','B'],true))) { throw new RuntimeException('INVALID_BULK_CONTEXT'); }
+        if($groupContext!==[]&&($action!=='confirm_relationship'||!preg_match('/\A[a-f0-9]{32}\z/D',(string)($groupContext['operation_id']??''))))throw new RuntimeException('INVALID_GROUP_CONTEXT');
         $notes=trim((string)($input['notes']??''));
         if(mb_strlen($notes,'UTF-8')>2000)throw new RuntimeException('NOTES_TOO_LONG');
         $q = $this->db->prepare("SELECT id FROM app_users WHERE id = ? AND role = 'admin' AND is_active = 1 FOR UPDATE");
@@ -76,7 +79,7 @@ final class MatchReviewService
             if (in_array($candidate['match_status'],['confirmed','rejected'],true)) { throw new RuntimeException('REOPEN_PRIOR_DECISION_FIRST'); }
             $status = match ($action) {
                 'confirm_same' => $this->confirmSame($candidate,$identity,$actor,$input,$created,$bulk!==[]),
-                'confirm_relationship' => $this->confirmRelationship($candidate,$identity,$actor,$input,$created),
+                'confirm_relationship' => $this->confirmRelationship($candidate,$identity,$actor,$input,$created,$groupContext!==[]),
                 'link_existing' => $this->linkExisting($candidate,$identity,$actor,$input,$created),
                 'create_separate' => $this->createSeparate($candidate,$identity,$actor,$created),
                 'reject' => $this->reject($candidate),
@@ -100,6 +103,7 @@ final class MatchReviewService
             'created'=>$created,'notes'=>$notes,
         ];
         if($bulk!==[])$metadata['bulk_operation']=$bulk;
+        if($groupContext!==[])$metadata['group_operation']=$groupContext;
         $q = $this->db->prepare('INSERT INTO audit_log (actor_user_id,action,entity_type,entity_id,metadata) VALUES (?,?,?,?,?)');
         $q->execute([$actor,'match_review_' . $action,'identity_match_candidates',(string)$candidateId,json_encode($metadata,JSON_THROW_ON_ERROR)]);
     }
@@ -171,14 +175,20 @@ final class MatchReviewService
         return 'confirmed';
     }
 
-    private function confirmRelationship(array $candidate,IdentityAssociations $identity,int $actor,array $input,array &$created): string
+    private function confirmRelationship(array $candidate,IdentityAssociations $identity,int $actor,array $input,array &$created,bool $groupRelationship=false): string
     {
+        if($groupRelationship){
+            $payer=trim((string)($input['payer_bma']??''))!==''?$this->personId($input['payer_bma']):($candidate['payer_person_id']===null?$this->newPerson($candidate['stripe_name'],$created):(int)$candidate['payer_person_id']);
+            $student=$candidate['student_person_id']===null?(trim((string)($input['student_bma']??''))!==''?$this->personId($input['student_bma']):$this->newPerson($candidate['source_name'],$created)):(int)$candidate['student_person_id'];
+            $signer=$payer;
+        }else{
         $payer = $this->personId(trim((string)($input['payer_bma'] ?? '')));
         $student = $this->personId(trim((string)($input['student_bma'] ?? '')));
         $signer = $this->personId(trim((string)($input['signer_bma'] ?? '')));
+        }
         if ($payer === $student) { throw new RuntimeException('SEPARATE_PAYER_STUDENT_REQUIRED'); }
-        $this->associate($identity,$candidate,'stripe',$payer,$actor,$created);
-        $this->associate($identity,$candidate,'signer',$signer,$actor,$created);
+        $this->associate($identity,$candidate,'stripe',$payer,$actor,$created,false,[],$groupRelationship);
+        $this->associate($identity,$candidate,'signer',$signer,$actor,$created,false,[],$groupRelationship);
         $relationships = [[$payer,$student,'payer']];
         if (!empty($input['confirm_source_relationship'])) {
             $label = strtolower(trim((string)$candidate['relationship_to_student']));
@@ -190,7 +200,7 @@ final class MatchReviewService
         }
         array_push($created['relationship_refs'], ...$relationships);
         $freshRelationships = $this->newRelationships($relationships);
-        $this->associate($identity,$candidate,'student',$student,$actor,$created,!$this->memberExists($student),$freshRelationships);
+        $this->associate($identity,$candidate,'student',$student,$actor,$created,!$this->memberExists($student),$freshRelationships,$groupRelationship);
         return $this->role($candidate) === 'signer' && $payer === $signer ? 'confirmed' : 'rejected';
     }
 

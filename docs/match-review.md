@@ -36,3 +36,7 @@ For bma2_v1/student source metadata, the non-signer candidate is displayed as **
 The internal source_name_unresolved candidate value, unique keys, action semantics, authorization, audit and undo safeguards are unchanged. Queue projection now includes trusted native labels and a read-only administrator-confirmation indicator. Existing saved evidence/reasons using historical role-ambiguity codes receive context-appropriate labels; no data, score, rejection or audit history is rewritten by viewing the page. Student-name labeling is not permission to create people, members, relationships or accepted identity links. Those remain explicit, audited administrator actions.
 
 Read-only validation and exact test commands are in [native-student-matching-validation.md](native-student-matching-validation.md). No database migration is needed for this correction.
+
+## Consolidated regular queue
+
+The regular Matches page now defaults to compatible person/role groups; `?view=raw` retains individual actions and history. See [person-centered review](grouped-match-review.md) for grouping, explicit preview/confirmation, safeguards and validation. No source records are physically merged.
