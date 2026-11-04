@@ -51,7 +51,7 @@ final class IdentityReviewGroups
             if($c['match_reason']==='manual_review_pending')$a['key'].=':held';
             elseif($c['match_status']==='rejected'&&$c['match_reason']!=='manual_confirm_relationship')$a['key'].=':rejected';
             $key=hash('sha256','identity-review-v1:'.$a['key']);
-            if(!isset($groups[$key]))$groups[$key]=['id'=>$key,'kind'=>$a['kind'],'name'=>$a['name']?:'Name unavailable','person_id'=>$a['person'],'candidate_rows'=>[],'customer_records'=>[],'waiver_records'=>[],'eligible_ids'=>[],'issues'=>[],'roles'=>['signer'=>0,'student'=>0,'unresolved'=>0],'transaction_count'=>0];
+            if(!isset($groups[$key]))$groups[$key]=['id'=>$key,'kind'=>$a['kind'],'payer_key'=>$graph['customerKeys'][$cu['id']],'name'=>$a['name']?:'Name unavailable','person_id'=>$a['person'],'candidate_rows'=>[],'customer_records'=>[],'waiver_records'=>[],'eligible_ids'=>[],'issues'=>[],'roles'=>['signer'=>0,'student'=>0,'unresolved'=>0],'transaction_count'=>0];
             $g=&$groups[$key];$g['candidate_rows'][(int)$c['id']]=$c;$g['customer_records'][(int)$cu['id']]=$cu;$g['waiver_records'][(int)$w['id']]=$w;
             if(isset($eligible[(int)$c['id']]))$g['eligible_ids'][]=(int)$c['id'];
             $g['roles'][$c['waiver_role']==='signer'?'signer':(WaiverSourceRole::isStudent($w)?'student':'unresolved')]++;

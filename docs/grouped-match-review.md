@@ -48,3 +48,15 @@ Production authenticated counts and outstanding conflict details require an auth
 Runtime: `app/Matching/BulkExactMatchService.php`, `app/Matching/MatchReviewService.php`, `app/Matching/IdentityReviewGroups.php`, `app/Matching/GroupedMatchReviewService.php`, `app/Views/match-review.php`, `app/Views/grouped-match-review.php`, `public/admin/_common.php`, `public/admin/matches.php`, `public/admin/group-match.php`, `public/assets/css/match-review.css`, `public/assets/js/group-match-review.js`.
 
 Tests: `tests/bulk-exact-matches.php`, `tests/native-student-matching.php`, `tests/grouped-matches.php`, `tests/grouped-match-cases.php`. Documentation: this file and the linked update in `docs/match-review.md`.
+
+## Remaining reconciliation classification (2026-11-04)
+
+The existing queue performs one read-only snapshot plus a customer-grain payment-count query. Only groups still needing decisions receive classifications: Same Person, Parent/Payer → Student, Existing Person, Needs Review. Completed groups retain their history and are not reclassified or reproposed. No importer, score, schema or association writer was replaced.
+
+A probable parent proposal requires every unresolved comparison to agree on nonblank payer/contact email, exact canonical billing/waiver address, a native explicitly labeled distinct student and an explicit mother/father/parent/guardian label. Canonicalization ignores case/punctuation/whitespace and expands only common street suffix equivalents. Billing street, city and ZIP must all be available; missing state/address components are not invented or guessed. A surname difference alone does not conflict with a parent proposal. Names alone or household contacts alone never infer parentage. Signer identity and all original score/hold/rejection/BMA conflict safeguards must still pass before approval is offered.
+
+Existing Person requires a safe existing-person reuse plan; Same Person also requires matching full name and email or complete address evidence. Held/conflicting/unsupported groups stay Needs Review. Proposed classifications are not accepted links. One recommended review link opens the existing precise preview, followed by the existing authenticated, CSRF-protected, audited confirmation. No production confirmations are executed by deployment.
+
+The classification summary counts only unresolved groups. New-person/member estimates include actionable plans only, deduplicating shared payer proposals across parent and child cards. Manual-review cases are excluded from estimates; payments are informational and never summed across household cards. Live counts require authenticated administrator access; do not substitute the approximate 80 supplied by the task or disposable fixture counts for measured totals.
+
+Focused classification validation: **181** existing/grouped/bulk/HTTP assertions passed, including ten added classification assertions; five changed PHP files linted and Git whitespace validation passed. No visual redesign or browser screenshot suite was repeated.

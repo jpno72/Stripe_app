@@ -9,7 +9,8 @@ final class GroupedMatchReviewService
     public function __construct(private readonly PDO $db){$this->bulk=new BulkExactMatchService($db,BulkExactMatchService::SCORE);}
     public function queue(int $actor,string $search='',string $status='open',int $page=1): array
     {
-        $projection=IdentityReviewGroups::build($this->bulk->reviewState($actor));
+        $state=$this->bulk->reviewState($actor);$projection=IdentityReviewGroups::build($state);
+        $projection=$this->classify($state,$projection);
         // Transaction grain is aggregated before touching any candidate/waiver association.
         $counts=$this->db->query('SELECT customer_id,COUNT(*) AS n FROM stripe_transactions WHERE customer_id IS NOT NULL GROUP BY customer_id')->fetchAll(PDO::FETCH_KEY_PAIR);
         $groups=[];$term=BulkExactMatchService::name(mb_substr($search,0,100));
@@ -23,13 +24,59 @@ final class GroupedMatchReviewService
         $total=count($groups);$page=max(1,min($page,max(1,(int)ceil($total/20))));
         return ['groups'=>array_slice($groups,($page-1)*20,20),'total'=>$total,'page'=>$page,'summary'=>$projection['summary']];
     }
+    /** One read-only snapshot; completed groups are neither reclassified nor reproposed. */
+    private function classify(array $state,array $projection): array
+    {
+        $counts=['examined'=>0,'same_person'=>0,'parent_student'=>0,'existing_person'=>0,'needs_review'=>0];$newPeople=[];$newMembers=[];
+        foreach($projection['groups'] as &$g){
+            if(!$g['needs_decision'])continue;
+            ++$counts['examined'];$g['classification']='Needs Review';$g['classification_evidence']=[];$g['review_action']=null;
+            $action=$g['kind']==='student'?'relationship':'same';$plan=$this->plan($state,$g['id'],$action,$projection,false);
+            $g['classification_blockers']=$plan['blockers'];$household=true;$contact=true;$hasRows=false;
+            foreach($g['candidate_rows'] as $c){
+                if($g['resolved'][(int)$c['id']]||in_array($c['match_status'],['confirmed','rejected'],true))continue;
+                $hasRows=true;$payer=$g['customer_records'][$c['stripe_customer_id']];$w=$g['waiver_records'][$c['cognito_waiver_id']];
+                $email=BulkExactMatchService::email($payer['email_normalized']??$payer['email']);$emailMatch=$email!==''&&filter_var($email,FILTER_VALIDATE_EMAIL)&&$email===BulkExactMatchService::email($w['contact_email']);
+                $billing=implode(' ',array_filter([$payer['address_line1']??null,$payer['address_city']??null,$payer['address_postal_code']??null],static fn($v)=>$v!==null&&trim($v)!==''));
+                $address=self::reviewAddress($billing);$addressMatch=!empty($payer['address_line1'])&&!empty($payer['address_city'])&&!empty($payer['address_postal_code'])&&$address!==''&&$address===self::reviewAddress((string)$w['address_text']);
+                $name=BulkExactMatchService::name($payer['name']);$target=BulkExactMatchService::name($c['waiver_role']==='signer'?$w['signer_print_name']:$w['source_name']);
+                $contact=$contact&&$name!==''&&$name===$target&&($emailMatch||$addressMatch);
+                $household=$household&&$emailMatch&&$addressMatch&&WaiverSourceRole::isStudent($w)&&$name!==''&&$target!==''&&$name!==$target&&in_array(BulkExactMatchService::name($w['relationship_to_student']),['mother','father','parent','guardian','legal guardian'],true);
+            }
+            if($hasRows&&$g['issues']===[]&&empty($g['held'])){
+                if($g['kind']==='student'&&$household){$g['classification']='Parent/Payer → Student';$g['classification_evidence']=['Payer email matches waiver contact','Normalized billing and waiver addresses match','Explicit parent/guardian source label','Student and payer are separate named people; surname differences are permitted'];if($plan['blockers']===[])$g['review_action']='relationship';}
+                elseif($g['kind']==='person'&&$plan['blockers']===[]&&($contact||$plan['people_to_reuse']>0)){$g['classification']=$plan['people_to_reuse']>0?'Existing Person':'Same Person';$g['classification_evidence']=['Compatible full name and contact evidence','Existing source-role and score safeguards pass'];$g['review_action']='same';}
+            }
+            $key=match($g['classification']){'Same Person'=>'same_person','Parent/Payer → Student'=>'parent_student','Existing Person'=>'existing_person',default=>'needs_review'};++$counts[$key];
+            // Estimates include only actionable proposals and deduplicate shared payer proposals across children/cards.
+            if($g['review_action']!==null){
+                $payerKey='payer:'.$g['payer_key'];
+                if($action==='relationship'){
+                    if($plan['payer_bma']===null)$newPeople[$payerKey]=true;
+                    if($plan['student_bma']===null)$newPeople['student:'.$g['id']]=true;
+                    if($plan['members_to_create']>0)$newMembers[$plan['student_bma']??'student:'.$g['id']]=true;
+                }else{
+                    if($plan['people_to_create']>0)$newPeople[$payerKey]=true;
+                    if($plan['members_to_create']>0)$newMembers[$g['person_bma']??$payerKey]=true;
+                }
+            }
+        }unset($g);
+        $projection['summary']['classification']=$counts+['new_people_estimate'=>count($newPeople),'new_members_estimate'=>count($newMembers)];return $projection;
+    }
+    private static function reviewAddress(string $value): string
+    {
+        $value=BulkExactMatchService::name($value);$value=preg_replace('/[^\p{L}\p{N}]+/u',' ',$value)??'';
+        $aliases=['street'=>'st','road'=>'rd','avenue'=>'ave','drive'=>'dr','lane'=>'ln','court'=>'ct','apartment'=>'apt'];
+        $value=preg_replace('/\bpennsylvania\b/u','pa',$value)??$value;
+        return trim(implode(' ',array_map(static fn($part)=>$aliases[$part]??$part,explode(' ',$value))));
+    }
     public function preview(int $actor,string $groupId,string $action='same'): array
     {
         return $this->plan($this->bulk->reviewState($actor),$groupId,$action);
     }
-    private function plan(array $state,string $id,string $action): array
+    private function plan(array $state,string $id,string $action,?array $projection=null,bool $fingerprint=true): array
     {
-        $projection=IdentityReviewGroups::build($state);$g=$projection['groups'][$id]??throw new RuntimeException('GROUP_NOT_FOUND');
+        $projection??=IdentityReviewGroups::build($state);$g=$projection['groups'][$id]??throw new RuntimeException('GROUP_NOT_FOUND');
         if(!in_array($action,['same','relationship'],true))throw new RuntimeException('INVALID_GROUP_ACTION');
         $result=['group'=>$g,'action'=>$action,'selection'=>[],'excluded'=>[],'people_to_create'=>0,'people_to_reuse'=>0,'members_to_create'=>0,'blockers'=>[],'payer_bma'=>null,'student_bma'=>$g['person_bma']];
         if($action==='same'){
@@ -89,7 +136,7 @@ final class GroupedMatchReviewService
         $cs=array_column($state['data']['stripe_customers'],null,'id');$ws=array_column($state['data']['cognito_waivers'],null,'id');
         foreach($state['data']['identity_match_candidates'] as $c)if(isset($affected[(int)$c['id']])){$result['affected_customers'][$c['stripe_customer_id']]=$cs[$c['stripe_customer_id']];$result['affected_waivers'][$c['cognito_waiver_id']]=$ws[$c['cognito_waiver_id']];}
         $result['blockers']=array_values(array_unique($result['blockers']));
-        $result['digest']=$action==='same'?$this->bulk->planForState($state['data'],$result['selection'])['digest']:hash('sha256',json_encode([$state['plan']['digest'],$id,$action,$result],JSON_THROW_ON_ERROR));
+        if($fingerprint)$result['digest']=$action==='same'?$this->bulk->planForState($state['data'],$result['selection'])['digest']:hash('sha256',json_encode([$state['plan']['digest'],$id,$action,$result],JSON_THROW_ON_ERROR));
         return $result;
     }
     public function confirm(int $actor,string $operation,string $digest,string $groupId,string $action,?array $selection=null): array

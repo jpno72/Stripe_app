@@ -96,7 +96,7 @@ final class BulkExactMatchService
     private function load(bool $lock): array
     {
         $fields=[
-            'stripe_customers'=>'id,stripe_customer_id,name,email,email_normalized,person_id,updated_at',
+            'stripe_customers'=>'id,stripe_customer_id,name,email,email_normalized,address_line1,address_city,address_postal_code,person_id,updated_at',
             'cognito_waivers'=>'id,source_record_id,submitted_at,contact_phone,address_text,source_locator,source_name,signer_print_name,contact_email,source_format,source_name_role,relationship_to_student,student_birth_date,signer_person_id,student_person_id,updated_at',
             'identity_match_candidates'=>'id,stripe_customer_id,cognito_waiver_id,waiver_role,match_score,(match_score > 0.50) AS score_above_half,match_status,match_method,match_reason,evidence,hard_conflict,reviewed_by,reviewed_at,updated_at',
             'identity_links'=>'id,person_id,source_system,source_type,external_id,source_role,match_status,match_method,match_score,match_reason,match_evidence,reviewed_by,reviewed_at,updated_at',
