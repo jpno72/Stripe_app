@@ -21,7 +21,7 @@ final class IdentityReviewGroups
         $relationships=[];foreach($data['person_relationships'] as $r)$relationships[$r['person_id'].':'.$r['related_person_id'].':'.$r['relationship_type']]=true;
         $assign=[];$stems=[];
         foreach($data['identity_match_candidates'] as $c){
-            $cu=$customers[$c['stripe_customer_id']];$w=$waivers[$c['cognito_waiver_id']];$n=BulkExactMatchService::name($cu['name']);$signer=BulkExactMatchService::name($w['signer_print_name']);$target=$c['waiver_role']==='signer'?$signer:BulkExactMatchService::name($w['source_name']);$role=$c['waiver_role']==='signer'?'signer':'student';
+            $cu=$customers[$c['stripe_customer_id']];$w=$waivers[$c['cognito_waiver_id']];$n=BulkExactMatchService::personName($cu['name']);$signer=BulkExactMatchService::personName($w['signer_print_name']);$target=$c['waiver_role']==='signer'?$signer:BulkExactMatchService::personName($w['source_name']);$role=$c['waiver_role']==='signer'?'signer':'student';
             $ps=$scope('stripe',$cu['stripe_customer_id'],'customer',$cu['person_id']===null?null:(int)$cu['person_id']);$ws=$scope('cognito',$w['source_locator'],$role,$w[$role.'_person_id']===null?null:(int)$w[$role.'_person_id']);$root=$graph['customerKeys'][$cu['id']];
             $self=WaiverSourceRole::isStudent($w)&&BulkExactMatchService::name($w['relationship_to_student'])==='self'&&$n!==''&&$n===$signer&&$target===$n;
             $sameRole=$role==='signer'||$self||($ps['person']!==null&&$ps['person']===$ws['person']);
@@ -31,7 +31,7 @@ final class IdentityReviewGroups
                 $key=$known!==null?'person:'.$known:($compatible?'person-root:'.$root:'proposal:'.$root.':'.$role.':'.hash('sha256',$target!==''?$target:'waiver:'.$w['id']));
                 $assign[(int)$c['id']]=['key'=>$key,'kind'=>'person','person'=>$known,'name'=>$role==='signer'?$w['signer_print_name']:$w['source_name'],'stem'=>null];
             }else{
-                $stem=$root.':'.hash('sha256',$target!==''?$target:'waiver:'.$w['id']);
+                $studentName=MatchScorer::comparisonName($w['source_name'],false);$stem=$root.':'.hash('sha256',$studentName!==''?$studentName:'waiver:'.$w['id']);
                 $assign[(int)$c['id']]=['key'=>'student:'.$stem,'kind'=>WaiverSourceRole::isStudent($w)||$ws['confirmed']?'student':'unresolved','person'=>$ws['person'],'name'=>$w['source_name'],'stem'=>$stem];
                 if($ws['person']!==null)$stems[$stem]['people'][$ws['person']]=true;
                 if($w['student_birth_date']!==null)$stems[$stem]['dob'][$w['student_birth_date']]=true;
@@ -77,7 +77,8 @@ final class IdentityReviewGroups
             $scores=array_map(static fn($c)=>(float)$c['match_score'],array_values($g['candidate_rows']));$g['score_min']=min($scores);$g['score_max']=max($scores);
             $g['person_bma']=$g['person_id']!==null?($people[$g['person_id']]['bma_person_id']??null):null;
             $allResolved=!in_array(false,$g['resolved'],true);$allRejected=count(array_filter($g['candidate_rows'],static fn($c)=>$c['match_status']==='rejected'))===count($g['candidate_rows']);
-            $g['status']=$g['issues']!==[]?'conflict':(!empty($g['held'])?'held':($allResolved?'confirmed':($allRejected?'rejected':($g['eligible_ids']!==[]||$g['kind']==='student'?'review':'unmatched'))));
+            $reviewed=$allResolved&&array_diff($g['issues'],['different_full_name','different_last_name','competing_source_names','hard_or_contradictory_evidence','person_name_requires_manual'])===[];
+            $g['status']=$reviewed?'confirmed':($allRejected?'rejected':($g['issues']!==[]?'conflict':(!empty($g['held'])?'held':($g['eligible_ids']!==[]||$g['kind']==='student'?'review':'unmatched'))));
             $g['needs_decision']=!in_array($g['status'],['confirmed','rejected'],true);if($g['needs_decision'])++$summary['groups_needing_decision'];if($g['status']==='conflict')++$summary['unresolved_conflicts'];
             $g['eligible_ids']=array_values(array_filter($g['eligible_ids'],fn($id)=>!$g['resolved'][$id]));
             $g['search']=BulkExactMatchService::name($g['name'].' '.implode(' ',$g['candidate_ids']));

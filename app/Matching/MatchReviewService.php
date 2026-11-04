@@ -64,7 +64,7 @@ final class MatchReviewService
     {
         if (!$this->db->inTransaction() || !in_array($action,['confirm_same','confirm_relationship','link_existing','create_separate','reject','later','reopen'],true) || $candidateId<1 || $actor<1) { throw new RuntimeException('REVIEW_TRANSACTION_REQUIRED'); }
         if ($bulk!==[] && ($action!=='confirm_same' || !preg_match('/\A[a-f0-9]{32}\z/D',(string)($bulk['operation_id']??'')) || !in_array($bulk['rule']??null,['A','B'],true))) { throw new RuntimeException('INVALID_BULK_CONTEXT'); }
-        if($groupContext!==[]&&($action!=='confirm_relationship'||!preg_match('/\A[a-f0-9]{32}\z/D',(string)($groupContext['operation_id']??''))))throw new RuntimeException('INVALID_GROUP_CONTEXT');
+        if($groupContext!==[]&&(!in_array($action,['confirm_relationship','confirm_same','reject','later'],true)||!preg_match('/\A[a-f0-9]{32}\z/D',(string)($groupContext['operation_id']??''))))throw new RuntimeException('INVALID_GROUP_CONTEXT');
         $notes=trim((string)($input['notes']??''));
         if(mb_strlen($notes,'UTF-8')>2000)throw new RuntimeException('NOTES_TOO_LONG');
         $q = $this->db->prepare("SELECT id FROM app_users WHERE id = ? AND role = 'admin' AND is_active = 1 FOR UPDATE");
@@ -78,7 +78,7 @@ final class MatchReviewService
         } else {
             if (in_array($candidate['match_status'],['confirmed','rejected'],true)) { throw new RuntimeException('REOPEN_PRIOR_DECISION_FIRST'); }
             $status = match ($action) {
-                'confirm_same' => $this->confirmSame($candidate,$identity,$actor,$input,$created,$bulk!==[]),
+                'confirm_same' => $this->confirmSame($candidate,$identity,$actor,$input,$created,$bulk!==[]||$groupContext!==[]),
                 'confirm_relationship' => $this->confirmRelationship($candidate,$identity,$actor,$input,$created,$groupContext!==[]),
                 'link_existing' => $this->linkExisting($candidate,$identity,$actor,$input,$created),
                 'create_separate' => $this->createSeparate($candidate,$identity,$actor,$created),
@@ -180,7 +180,7 @@ final class MatchReviewService
         if($groupRelationship){
             $payer=trim((string)($input['payer_bma']??''))!==''?$this->personId($input['payer_bma']):($candidate['payer_person_id']===null?$this->newPerson($candidate['stripe_name'],$created):(int)$candidate['payer_person_id']);
             $student=$candidate['student_person_id']===null?(trim((string)($input['student_bma']??''))!==''?$this->personId($input['student_bma']):$this->newPerson($candidate['source_name'],$created)):(int)$candidate['student_person_id'];
-            $signer=$payer;
+            $signer=($input['signer_is_payer']??'1')==='1'?$payer:(($input['signer_is_student']??'')==='1'?$student:(trim((string)($input['signer_bma']??''))!==''?$this->personId($input['signer_bma']):($candidate['signer_person_id']===null?$this->newPerson($candidate['signer_print_name'],$created):(int)$candidate['signer_person_id'])));
         }else{
         $payer = $this->personId(trim((string)($input['payer_bma'] ?? '')));
         $student = $this->personId(trim((string)($input['student_bma'] ?? '')));

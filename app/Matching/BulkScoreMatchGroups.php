@@ -10,8 +10,8 @@ final class BulkScoreMatchGroups
         $parent=[];$find=function(string $node)use(&$parent,&$find):string{if(!isset($parent[$node]))$parent[$node]=$node;if($parent[$node]!==$node)$parent[$node]=$find($parent[$node]);return $parent[$node];};
         $join=function(string $a,string $b)use(&$parent,$find):void{$a=$find($a);$b=$find($b);if($a!==$b){if(strcmp($a,$b)>0)[$a,$b]=[$b,$a];$parent[$b]=$a;}};
         $signatures=[];$nodeSignatures=[];$nodeNames=[];$accepted=[];$customerByExternal=[];$waiverByExternal=[];
-        foreach($customers as $id=>$c){$node='c:'.$id;$find($node);$customerByExternal[$c['stripe_customer_id']]=$node;$nodeNames[$node]=BulkExactMatchService::name($c['name']);$nodeSignatures[$node]=$identityKey($c['name'],$c['email_normalized']??$c['email']);}
-        foreach($waivers as $id=>$w){$node='w:'.$id;$find($node);$waiverByExternal[$w['source_locator']]=$node;$nodeNames[$node]=BulkExactMatchService::name($w['signer_print_name']);$nodeSignatures[$node]=$identityKey($w['signer_print_name'],$w['contact_email']);}
+        foreach($customers as $id=>$c){$node='c:'.$id;$find($node);$customerByExternal[$c['stripe_customer_id']]=$node;$nodeNames[$node]=BulkExactMatchService::personName($c['name']);$nodeSignatures[$node]=$identityKey($c['name'],$c['email_normalized']??$c['email']);}
+        foreach($waivers as $id=>$w){$node='w:'.$id;$find($node);$waiverByExternal[$w['source_locator']]=$node;$nodeNames[$node]=BulkExactMatchService::personName($w['signer_print_name']);$nodeSignatures[$node]=$identityKey($w['signer_print_name'],$w['contact_email']);}
         // Exact full name+email and accepted identity IDs are independent, previously authorized anchors.
         foreach($nodeSignatures as $node=>$key)if($key!==null){if(isset($signatures[$key]))$join($node,$signatures[$key]);else $signatures[$key]=$node;}
         foreach($data['identity_links'] as $link){
@@ -20,7 +20,7 @@ final class BulkScoreMatchGroups
             if($node!==null){$accepted[$node][(int)$link['person_id']]=true;$join($node,'p:'.$link['person_id']);}
         }
         $selfStudent=static function(array $w,array $c):bool{
-            $n=BulkExactMatchService::name($c['name']);return $n!==''&&WaiverSourceRole::isStudent($w)&&BulkExactMatchService::name($w['relationship_to_student'])==='self'&&BulkExactMatchService::name($w['source_name'])===$n&&BulkExactMatchService::name($w['signer_print_name'])===$n;
+            $n=BulkExactMatchService::personName($c['name']);return $n!==''&&WaiverSourceRole::isStudent($w)&&BulkExactMatchService::name($w['relationship_to_student'])==='self'&&BulkExactMatchService::personName($w['source_name'])===$n&&BulkExactMatchService::personName($w['signer_print_name'])===$n;
         };
         $signerScores=[];$confirmedSigners=[];
         foreach($data['identity_match_candidates'] as $c)if($c['waiver_role']==='signer'&&!empty($c['score_above_half']))$signerScores[$c['stripe_customer_id'].':'.$c['cognito_waiver_id']]=true;
@@ -32,6 +32,10 @@ final class BulkScoreMatchGroups
             if(!$qualified){$excluded[$id]='score_not_above_half';continue;}
             $customer=$customers[$c['stripe_customer_id']]??null;$w=$waivers[$c['cognito_waiver_id']]??null;
             if(!$customer||!$w){$excluded[$id]='missing_source_record';continue;}
+            if($c['waiver_role']==='signer'&&MatchScorer::comparisonName($customer['name'],false)!==MatchScorer::comparisonName($w['signer_print_name'],false)&&BulkExactMatchService::personName($customer['name'])===BulkExactMatchService::personName($w['signer_print_name'])){
+                $email=BulkExactMatchService::email($customer['email_normalized']??$customer['email']);$e=json_decode((string)$c['evidence'],true)?:[];
+                if(!(($email!==''&&$email===BulkExactMatchService::email($w['contact_email']))||in_array('exact_address',$e['signals']??[],true)||($customer['person_id']!==null&&$customer['person_id']===$w['signer_person_id']))){$excluded[$id]='variant_contact_required';continue;}
+            }
             if($c['waiver_role']==='signer')$rule='A';
             elseif($c['waiver_role']==='source_name_unresolved'&&$selfStudent($w,$customer))$rule='B';
             else{$excluded[$id]=WaiverSourceRole::isStudent($w)?'student_role_separation':'legacy_source_role_ambiguous';continue;}
@@ -45,7 +49,7 @@ final class BulkScoreMatchGroups
             $a=$nodeSignatures['c:'.$c['stripe_customer_id']];$b=$nodeSignatures['w:'.$c['cognito_waiver_id']];if($a!==null&&$a===$b)$strong[$key]=true;
         }
         $peopleBySignature=[];$peopleByName=[];
-        foreach($data['people'] as $person){$n=BulkExactMatchService::name(trim(implode(' ',[$person['first_name']??'',$person['middle_name']??'',$person['last_name']??''])));if($n!=='')$peopleByName[$n][]=(int)$person['id'];$sig=$identityKey($n,$person['email_normalized']??$person['email']);if($sig!==null)$peopleBySignature[$sig][]=(int)$person['id'];}
+        foreach($data['people'] as $person){$n=BulkExactMatchService::personName(trim(implode(' ',[$person['first_name']??'',$person['middle_name']??'',$person['last_name']??''])));if($n!=='')$peopleByName[$n][]=(int)$person['id'];$sig=$identityKey($n,$person['email_normalized']??$person['email']);if($sig!==null)$peopleBySignature[$sig][]=(int)$person['id'];}
         foreach($groups as $key=>$group){
             $allNames=[];$payerSignatures=[];
             foreach($customerGroups[$key]??[] as $id){$node='c:'.$id;$allNames[$nodeNames[$node]]=true;$payerSignatures[$nodeSignatures[$node]??'missing:'.$id]=true;foreach($accepted[$node]??[] as $pid=>$_)$sourcePeople[$key][$pid]=true;if(($sig=$nodeSignatures[$node])!==null)foreach($peopleBySignature[$sig]??[] as $pid)$personGroups[$key][$pid]=$pid;}

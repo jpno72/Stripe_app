@@ -11,6 +11,10 @@ final class MatchScorer
         $signals = []; $conflicts = []; $points = 0;
         $payerName = $this->name($payer['name'] ?? null);
         $waiverName = $this->name($waiver['name'] ?? null);
+        $variant=self::comparisonName($payer['name']??null,false)!==self::comparisonName($waiver['name']??null,false)&&$payerName===$waiverName;
+        $ambiguous=self::ambiguousName($payer['name']??null)||self::ambiguousName($waiver['name']??null);
+        if($variant)$conflicts[]='name_variant_requires_review';
+        if($ambiguous)$conflicts[]='ambiguous_name_variant';
         $payerLast = $this->last($payerName); $waiverLast = $this->last($waiverName);
         if ($payerName !== '' && $waiverName !== '') {
             if ($payerName === $waiverName) { $points += 42; $signals[] = 'exact_full_name'; }
@@ -46,7 +50,7 @@ final class MatchScorer
             $signals[] = 'possible_parent_student_structure';
         }
         $score = max(0, min(100, $points)) / 100;
-        $hardConflict = in_array('conflicting_birth_date', $conflicts, true)
+        $hardConflict = $variant || $ambiguous || in_array('conflicting_birth_date', $conflicts, true)
             || in_array('source_name_role_unverified', $conflicts, true)
             || in_array('student_identity_unverified', $conflicts, true)
             || in_array('self_label_names_disagree', $conflicts, true);
@@ -76,10 +80,30 @@ final class MatchScorer
         if ($left !== '' && $left === $right) { $points += $weight; $signals[] = $signal; }
     }
 
-    private function name(?string $value): string
+    /** Comparison-only normalization. Full middle names and original stored values are preserved. */
+    public static function comparisonName(?string $value,bool $variants=true): string
     {
-        return mb_strtolower(trim(preg_replace('/\s+/u', ' ', (string)$value)), 'UTF-8');
+        $parts=explode(' ',mb_strtolower(trim(preg_replace('/[\s\p{Z}]+/u',' ',(string)$value)??''),'UTF-8'));
+        if(count($parts)<2)return implode(' ',$parts);
+        $last=array_pop($parts);$first=array_shift($parts);
+        $parts=array_values(array_filter($parts,static fn($part)=>!preg_match('/\A\p{L}\.?\z/u',$part)));
+        if($variants){$rules=self::nameRules();if(!isset($rules['ambiguous'][$first]))foreach($rules['families'] as $formal=>$aliases)if($first===$formal||in_array($first,$aliases,true)){$first=$formal;break;}}
+        return implode(' ',[$first,...$parts,$last]);
     }
+    private static function nameRules(): array { static $rules;return $rules??=require dirname(__DIR__,2).'/config/name-variants.php'; }
+    public static function ambiguousName(?string $value): bool
+    {
+        $first=explode(' ',self::comparisonName($value,false))[0];return isset(self::nameRules()['ambiguous'][$first]);
+    }
+    public static function namesCompatible(?string $a,?string $b,bool $allowAmbiguous=false): bool
+    {
+        if(self::comparisonName($a)!==''&&self::comparisonName($a)===self::comparisonName($b))return true;
+        if(!$allowAmbiguous)return false;
+        $left=explode(' ',self::comparisonName($a,false));$right=explode(' ',self::comparisonName($b,false));
+        if(count($left)<2||array_slice($left,1)!==array_slice($right,1))return false;
+        $rules=self::nameRules()['ambiguous'];return in_array($right[0],$rules[$left[0]]??[],true)||in_array($left[0],$rules[$right[0]]??[],true);
+    }
+    private function name(?string $value): string { return self::comparisonName($value); }
 
     private function last(string $name): string
     {

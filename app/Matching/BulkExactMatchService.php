@@ -19,13 +19,14 @@ final class BulkExactMatchService
     {
         return mb_strtolower(trim(preg_replace('/[\s\p{Z}]+/u',' ',(string)$value)??''),'UTF-8');
     }
+    public static function personName(?string $value): string { return MatchScorer::comparisonName($value); }
     public static function email(?string $value): string
     {
         return mb_strtolower(preg_replace('/\A[\s\p{Z}]+|[\s\p{Z}]+\z/u','',(string)$value)??'','UTF-8');
     }
     private static function key(?string $name,?string $email): ?string
     {
-        $n=self::name($name);$e=self::email($email);
+        $n=self::personName($name);$e=self::email($email);
         return $n===''||$e===''||!filter_var($e,FILTER_VALIDATE_EMAIL)?null:hash('sha256',json_encode([$n,$e],JSON_THROW_ON_ERROR));
     }
     private function admin(int $actor,bool $lock=false): void
@@ -115,7 +116,7 @@ final class BulkExactMatchService
     {
         if(!$this->scoreMode())return self::selfStudent($waiver,$key);
         $n=$this->scoreNames[$key]??'';
-        return $n!==''&&WaiverSourceRole::isStudent($waiver)&&self::name($waiver['relationship_to_student'])==='self'&&self::name($waiver['source_name'])===$n&&self::name($waiver['signer_print_name'])===$n;
+        return $n!==''&&WaiverSourceRole::isStudent($waiver)&&self::name($waiver['relationship_to_student'])==='self'&&self::personName($waiver['source_name'])===$n&&self::personName($waiver['signer_print_name'])===$n;
     }
     /** Internal pure plan over a previously validated complete snapshot. */
     public function planForState(array $data,?array $selection=null): array { return $this->plan($data,$selection); }
@@ -185,7 +186,7 @@ final class BulkExactMatchService
                 else{
                     $g['person_bma']=$p['bma_person_id'];
                     $full=trim(implode(' ',[$p['first_name']??'',$p['middle_name']??'',$p['last_name']??'']));$sample=$customers[$g['decisions'][0]['customer_id']];
-                    if((self::name($full)!==''&&self::name($full)!==self::name($sample['name']))||(!$this->scoreMode()&&($email=self::email($p['email_normalized']??$p['email']))!==''&&$email!==self::email($sample['email_normalized']??$sample['email'])))$blocked??='existing_person_evidence_conflict';
+                    if((self::personName($full)!==''&&self::personName($full)!==self::personName($sample['name']))||(!$this->scoreMode()&&($email=self::email($p['email_normalized']??$p['email']))!==''&&$email!==self::email($sample['email_normalized']??$sample['email'])))$blocked??='existing_person_evidence_conflict';
                     if(($hasStudent||$dobs!==[])&&$p['birth_date']!==null)$dobs[$p['birth_date']]=true;
                 }
             }
