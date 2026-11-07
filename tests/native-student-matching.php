@@ -63,8 +63,8 @@ try{
  $manual=$hash();$preview=$dry();nativeCheck($preview['manual_preserved']===2&&$manual===$hash(),'saved manual hold and rejection take precedence even in read-only preview');
  nativeThrows(fn()=>$review->decide($holdCandidate,'later',$users['viewer'],[]),'ADMIN_REVIEW_REQUIRED','viewer cannot make review decisions');
  // Explicit manual fixture confirmations; these are not matcher automation.
- $review->decide($adultCandidate,'confirm_same',$users['admin'],['person_bma'=>$john['bma_person_id'],'notes'=>'Adult fixture reviewed']);
- $review->decide($parentCandidate,'confirm_relationship',$users['admin'],['payer_bma'=>$jane['bma_person_id'],'signer_bma'=>$jane['bma_person_id'],'student_bma'=>$johnny['bma_person_id'],'confirm_source_relationship'=>'1','notes'=>'Parent and child fixture reviewed']);
+ $review->decide($adultCandidate,'confirm_same',$users['admin'],['person_bma'=>$john['bma_person_id'],'member_verified'=>'1','notes'=>'Adult fixture membership separately verified']);
+ $review->decide($parentCandidate,'confirm_relationship',$users['admin'],['payer_bma'=>$jane['bma_person_id'],'signer_bma'=>$jane['bma_person_id'],'student_bma'=>$johnny['bma_person_id'],'confirm_source_relationship'=>'1','member_verified'=>'1','notes'=>'Parent/child fixture and student membership separately verified']);
  $confirmed=$hash();$result=$dry();nativeCheck($confirmed===$hash()&&$result['manual_preserved']===4,'manual confirmations/rejections/holds and audits survive matcher reruns unchanged');
  nativeCheck($jane['id']!==$johnny['id']&&(int)$q("SELECT COUNT(*) FROM person_relationships WHERE person_id=? AND related_person_id=? AND relationship_type IN ('payer','parent')",[$jane['id'],$johnny['id']])->fetchColumn()===2,'administrator-reviewed parent/student identities and relationships remain separate');
  nativeCheck($q('SELECT student_person_id FROM cognito_waivers WHERE id=?',[$waivers['parent-two']])->fetchColumn()===null,'reviewing one repeated waiver does not auto-link another waiver');

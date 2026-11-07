@@ -232,7 +232,7 @@ final class BulkExactMatchService
                 $summary['eligible_candidates']++;$summary[$d['rule']==='A'?'payer_signer_candidates':'self_student_candidates']++;
                 $w=$waivers[$d['waiver_id']];$c=$customers[$d['customer_id']];$identityWaivers[$identity][$w['id']]=true;
                 $allScopes['stripe/customer/'.$c['stripe_customer_id'].'/customer']=true;$allScopes['cognito/waiver/'.$w['source_locator'].'/signer']=true;
-                if($d['rule']==='B'){$allScopes['cognito/waiver/'.$w['source_locator'].'/student']=true;if($g['person_id']===null||!isset($members[$g['person_id']]))$newMembers[$identity]=true;}
+                if($d['rule']==='B'){$allScopes['cognito/waiver/'.$w['source_locator'].'/student']=true;}
             }
         }
         $summary['people_to_reuse']=count($reused);$summary['members_to_create']=count($newMembers);

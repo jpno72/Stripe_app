@@ -23,13 +23,17 @@ final class MemberProfileRepository
           (SELECT GROUP_CONCAT(DISTINCT r.relationship_type ORDER BY r.relationship_type SEPARATOR ', ') FROM person_relationships r WHERE r.person_id=scope.payer_person_id AND r.related_person_id=scope.member_person_id) relationships,
           (SELECT COUNT(*) FROM vw_payer_member_scope x WHERE x.payer_person_id=scope.payer_person_id) member_count
           FROM vw_payer_member_scope scope JOIN people p ON p.id=scope.payer_person_id WHERE scope.member_id=? ORDER BY p.last_name,p.id",[$member]);
-        foreach($rows as &$row){$row['customers']=$this->rows("SELECT c.stripe_customer_id FROM stripe_customers c JOIN identity_links l ON l.source_system='stripe' AND l.source_type='customer' AND l.source_role='customer' AND l.external_id=c.stripe_customer_id AND l.match_status IN ('automatic','confirmed') WHERE l.person_id=? ORDER BY c.stripe_customer_id",[$row['payer_person_id']]);}unset($row);return $rows;
+        foreach($rows as &$row){$row['customers']=$this->rows("SELECT c.stripe_customer_id FROM stripe_customers c JOIN identity_links l ON l.source_system='stripe' AND l.source_type='customer' AND l.source_role='customer' AND l.external_id=c.stripe_customer_id AND l.match_status IN ('automatic','confirmed') WHERE l.person_id=? ORDER BY c.stripe_customer_id",[$row['payer_person_id']]); $row['related_student_count']=(int)$this->rows("SELECT COUNT(*) n FROM (SELECT related_person_id person_id FROM person_relationships WHERE person_id=? AND relationship_type='payer' UNION SELECT person_id FROM members WHERE person_id=?) participants",[$row['payer_person_id'],$row['payer_person_id']])[0]['n'];}unset($row);return $rows;
+    }
+    public function guardians(int $person): array
+    {
+        return $this->rows("SELECT p.bma_person_id,TRIM(CONCAT_WS(' ',p.first_name,p.middle_name,p.last_name)) name,r.relationship_type FROM person_relationships r JOIN people p ON p.id=r.person_id WHERE r.related_person_id=? AND r.relationship_type IN ('parent','guardian') ORDER BY p.id,r.relationship_type",[$person]);
     }
     public function subscriptions(int $member): array
     {
         $rows=$this->rows("SELECT s.subscription_id,s.stripe_subscription_id,s.stripe_customer_id,s.subscription_status,s.subscription_started_at,s.canceled_at,s.current_period_start,s.current_period_end,s.explicitly_linked_member_count,
           EXISTS(SELECT 1 FROM subscription_members current_map WHERE current_map.subscription_id=s.subscription_id AND current_map.member_id=? AND (current_map.valid_from IS NULL OR current_map.valid_from<=CURRENT_DATE()) AND (current_map.valid_until IS NULL OR current_map.valid_until>=CURRENT_DATE())) current_assignment
-          FROM vw_subscription_summary s WHERE EXISTS(SELECT 1 FROM subscription_members map WHERE map.subscription_id=s.subscription_id AND map.member_id=?) ORDER BY s.subscription_id DESC LIMIT 100",[$member,$member]);
+          FROM vw_subscription_summary s WHERE EXISTS(SELECT 1 FROM subscription_members map WHERE map.subscription_id=s.subscription_id AND map.member_id=?) ORDER BY s.subscription_id DESC",[$member,$member]);
         foreach($rows as &$row){$row['items']=$this->rows('SELECT product_name,stripe_price_id,amount_minor,amount_basis,quantity,currency,billing_interval,billing_interval_count,monthly_equivalent_minor FROM vw_subscription_item_rates WHERE subscription_id=? ORDER BY subscription_item_id',[$row['subscription_id']]);}unset($row);return $rows;
     }
     public function waivers(int $person,?array $emergencyAccessConfig=null): array
@@ -42,7 +46,7 @@ final class MemberProfileRepository
           student_link.match_status student_link_status,signer_link.match_status signer_link_status$emergency
           FROM cognito_waivers w LEFT JOIN raw_cognito_waivers raw ON raw.id=w.latest_raw_id JOIN identity_links student_link ON student_link.source_system='cognito' AND student_link.source_type='waiver' AND student_link.source_role='student' AND student_link.external_id=w.source_locator AND student_link.match_status IN ('automatic','confirmed')
           LEFT JOIN identity_links signer_link ON signer_link.source_system='cognito' AND signer_link.source_type='waiver' AND signer_link.source_role='signer' AND signer_link.external_id=w.source_locator AND signer_link.match_status IN ('automatic','confirmed')
-          LEFT JOIN people signer ON signer.id=signer_link.person_id WHERE student_link.person_id=? ORDER BY w.submitted_at DESC,w.id DESC LIMIT 50",[$person]);
+          LEFT JOIN people signer ON signer.id=signer_link.person_id WHERE student_link.person_id=? ORDER BY w.submitted_at DESC,w.id DESC",[$person]);
     }
     public function identityLinks(int $member,int $person): array
     {

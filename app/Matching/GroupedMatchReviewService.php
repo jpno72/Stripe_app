@@ -84,7 +84,8 @@ final class GroupedMatchReviewService
     {
         $out=[];foreach(['person_bma','payer_bma','student_bma','signer_bma','notes'] as $key)$out[$key]=is_string($input[$key]??null)?trim($input[$key]):'';
         if(mb_strlen($out['notes'])>2000)throw new RuntimeException('NOTES_TOO_LONG');
-        foreach(['member_verified','signer_is_payer','signer_is_student','confirm_source_relationship','verify_variant'] as $key)$out[$key]=($input[$key]??null)==='1'?'1':'';
+        foreach(['student_verified','member_verified','signer_is_payer','signer_is_student','confirm_source_relationship','verify_variant'] as $key)$out[$key]=($input[$key]??null)==='1'?'1':'';
+        if($out['member_verified']==='1')$out['student_verified']='1';
         return $out;
     }
     private function manualPlan(array $state,string $id,string $action,array $input): array
@@ -92,6 +93,10 @@ final class GroupedMatchReviewService
         $input=self::reviewInput($input);$projection=IdentityReviewGroups::build($state);$g=$projection['groups'][$id]??throw new RuntimeException('GROUP_NOT_FOUND');
         $r=['group'=>$g,'action'=>$action,'input'=>$input,'selection'=>[],'signer_selection'=>[],'excluded'=>[],'blockers'=>[],'people_to_create'=>0,'people_to_reuse'=>0,'members_to_create'=>0,'affected_customers'=>[],'affected_waivers'=>[],'payer_bma'=>null,'student_bma'=>null];
         $people=array_column($state['data']['people'],null,'bma_person_id');$ids=array_column($state['data']['people'],'bma_person_id','id');$proposed=[];$reuse=[];$membership=[];
+        // Repeated waivers/accounts in an already approved component reuse its verified payer.
+        if($action==='manual_same'&&$input['person_bma']===''&&$g['kind']==='person'&&$g['person_id']!==null)$input['person_bma']=$ids[$g['person_id']]??'';
+        if($action==='manual_relationship'&&$input['payer_bma']===''){$hints=[];foreach($projection['groups'] as $other)if($other['payer_key']===$g['payer_key']&&$other['kind']==='person'&&$other['person_id']!==null)$hints[(int)$other['person_id']]=true;if(count($hints)===1)$input['payer_bma']=$ids[(int)array_key_first($hints)]??'';elseif(count($hints)>1)$r['blockers'][]='Competing verified payer identities need separate review.';}
+        $r['input']=$input;
         foreach(['person_bma','payer_bma','student_bma','signer_bma'] as $key)if($input[$key]!==''&&!isset($people[$input[$key]]))$r['blockers'][]='Selected BMA person is unavailable.';
         if($action==='defer'&&$input['notes']==='')$r['blockers'][]='Enter a short reason for later review.';
         if(in_array($action,['manual_same','manual_relationship'],true))foreach($g['issues'] as $issue)if(!in_array($issue,['different_full_name','different_last_name','competing_source_names','hard_or_contradictory_evidence','person_name_requires_manual'],true))$r['blockers'][]='Protected conflict: '.str_replace('_',' ',$issue);
@@ -107,14 +112,14 @@ final class GroupedMatchReviewService
                 // Ambiguous aliases require explicit independent verification and an existing reviewed BMA selection.
                 if($name===''||(($name!==$other||$ambiguous)&&!($ambiguous&&$input['verify_variant']==='1'&&$input['person_bma']!==''&&MatchScorer::namesCompatible($cu['name'],$target,true)))){$r['excluded'][]=$cid;continue;}
                 if(!$contact&&$cu['person_id']===null){$r['excluded'][]=$cid;continue;}
-                if($student&&(!WaiverSourceRole::isStudent($w)||BulkExactMatchService::name($w['relationship_to_student'])!=='self'||!MatchScorer::namesCompatible($cu['name'],$w['signer_print_name'],$input['verify_variant']==='1'&&$input['person_bma']!=='')||$input['member_verified']!=='1')){$r['excluded'][]=$cid;continue;}
+                if($student&&(!WaiverSourceRole::isStudent($w)||BulkExactMatchService::name($w['relationship_to_student'])!=='self'||!MatchScorer::namesCompatible($cu['name'],$w['signer_print_name'],$input['verify_variant']==='1'&&$input['person_bma']!=='')||$input['student_verified']!=='1')){$r['excluded'][]=$cid;continue;}
                 if($student&&$w['student_birth_date']!==null){$births[$w['student_birth_date']]=true;$dob=new DateTimeImmutable($w['student_birth_date']);$today=new DateTimeImmutable(AppTime::today());if($dob>$today||$dob->diff($today)->y<18)$r['blockers'][]='A minor Self claim needs individual role verification.';}
                 $role=$student?'student':'signer';$targetNames[$name]=true;
                 foreach([$cu['person_id'],$w[$role.'_person_id'],$input['person_bma']!==''?($people[$input['person_bma']]['id']??null):null] as $pid)if($pid!==null)$reuse[(int)$pid]=true;
-                if($student)$membership['same']=true;
+                if($student&&$input['member_verified']==='1')$membership['same']=true;
             }
             if($action==='manual_relationship'){
-                if(!$student||!WaiverSourceRole::isStudent($w)||$input['member_verified']!=='1'){$r['excluded'][]=$cid;continue;}
+                if(!$student||!WaiverSourceRole::isStudent($w)||$input['student_verified']!=='1'){$r['excluded'][]=$cid;continue;}
                 if(MatchScorer::comparisonName($cu['name'],false)===MatchScorer::comparisonName($w['source_name'],false)){$r['excluded'][]=$cid;continue;}
                 if($input['signer_is_payer']==='1'&&$input['signer_is_student']==='1')$r['blockers'][]='Signer cannot be both the separate payer and student.';
                 if($input['signer_is_student']==='1'&&!MatchScorer::namesCompatible($w['signer_print_name'],$w['source_name']))$r['blockers'][]='Signer and student names do not agree.';
@@ -130,7 +135,7 @@ final class GroupedMatchReviewService
                     $person=$cached??$selected;$key=$role==='signer'&&$input['signer_is_payer']==='1'?'payer':($role==='signer'?($input['signer_is_student']==='1'?'student':'signer:'.MatchScorer::comparisonName($w['signer_print_name'],false)):$role);
                     $proposed[$key][$person===null?'new':(string)$person]=true;if($person!==null)$reuse[(int)$person]=true;
                 }
-                $membership['student']=true;
+                if($input['member_verified']==='1')$membership['student']=true;
             }
             if($action==='different'&&$cu['person_id']!==null&&$cu['person_id']===$w[$student?'student_person_id':'signer_person_id']){$r['excluded'][]=$cid;continue;}
             if(in_array($action,['manual_same','manual_relationship'],true)){
@@ -172,7 +177,7 @@ final class GroupedMatchReviewService
             foreach($state['plan']['groups'] as $pg){$selected=array_filter($pg['decisions'],fn($d)=>in_array($d['id'],$selection,true));if($selected===[])continue;
                 $result['people_to_create']+=(int)($pg['person_id']===null);$result['people_to_reuse']+=(int)($pg['person_id']!==null);
                 $student=false;foreach($selected as $d)$student=$student||$d['rule']==='B';
-                if($student&&($pg['person_id']===null||!in_array($pg['person_id'],array_column($state['data']['members'],'person_id'))))++$result['members_to_create'];
+
             }
         }else{
             if($g['kind']!=='student'||$g['issues']!==[]||!empty($g['held']))$result['blockers'][]='Group requires individual conflict review.';
@@ -212,7 +217,7 @@ final class GroupedMatchReviewService
 
             $result['payer_bma']=$payer===null?null:$people[$payer]['bma_person_id'];$result['student_bma']=$student===null?null:$people[$student]['bma_person_id'];
             $result['people_to_create']=(int)($payer===null)+(int)($student===null);$result['people_to_reuse']=2-$result['people_to_create'];
-            $result['members_to_create']=(int)($student===null||!in_array($student,array_column($state['data']['members'],'person_id')));
+            $result['members_to_create']=0;
             $result['signer_selection']=$signerIds;
         }
         $result['selection']=array_values(array_unique($result['selection']));sort($result['selection'],SORT_NUMERIC);

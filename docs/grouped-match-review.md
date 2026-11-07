@@ -72,3 +72,7 @@ A CSRF-protected POST prepares the SELECT-only preview, including exact affected
 All Stripe, Cognito and BMA original names are preserved. Generic text/address/relationship normalization remains separate. No historical scores or decisions are recalculated, and no matcher write run occurs. Future scorer results mark nickname/ambiguous comparisons as requiring review, preventing nickname equivalence from becoming automatic identity proof.
 
 Focused validation: 212 grouped/bulk/classification/name/action/HTTP assertions passed; native matching/security/dashboard/Cognito regressions remain covered by 49 + 31 + 28 + 76 assertions. Writes occurred only in disposable localhost databases. PHP lint and Git whitespace checks are required before the selective deployment. No migrations or production identity decisions are run. Live unresolved counts require an authenticated application session and must not be inferred from fixture totals or the approximate 80 reported by the administrator.
+
+## Membership finalization policy (2026-11-07)
+
+Identity/waiver acceptance no longer implies a member record. `student_verified` establishes the participant role; explicit `member_verified` establishes an academy membership relationship. Bulk identity-only previews now show zero automatic member inserts. Historical member records are preserved for review. See [Finalize People & Members](people-member-finalization.md) for the separate evidence-based preview and confirmation. This supersedes earlier dated descriptions of automatic student membership creation.

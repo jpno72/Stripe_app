@@ -53,7 +53,7 @@ final class PersonResolver
     }
 
     /** Admin-reviewed person assignments; a native student label alone never establishes BMA identity. */
-    public function confirmReviewedHousehold(string $stripeCustomerId, string $waiverLocator, int $payerPerson, int $signerPerson, int $studentPerson, int $adminUserId, bool $confirmSourceRelationship): void
+    public function confirmReviewedHousehold(string $stripeCustomerId, string $waiverLocator, int $payerPerson, int $signerPerson, int $studentPerson, int $adminUserId, bool $confirmSourceRelationship,bool $membershipEstablished=false): void
     {
         if ($payerPerson < 1 || $signerPerson < 1 || $studentPerson < 1 || $adminUserId < 1) { throw new RuntimeException('INVALID_REVIEWED_HOUSEHOLD'); }
         $q = $this->db->prepare('SELECT id FROM stripe_customers WHERE stripe_customer_id = ?'); $q->execute([$stripeCustomerId]);
@@ -79,7 +79,7 @@ final class PersonResolver
         (new IdentityAssociations($this->db))->decideMany([
             ['stripe','customer',$stripeCustomerId,'customer',$payerPerson,'confirmed',$adminUserId],
             ['cognito','waiver',$waiverLocator,'signer',$signerPerson,'confirmed',$adminUserId],
-            ['cognito','waiver',$waiverLocator,'student',$studentPerson,'confirmed',$adminUserId,true,$relationships],
+            ['cognito','waiver',$waiverLocator,'student',$studentPerson,'confirmed',$adminUserId,$membershipEstablished,$relationships],
         ]);
     }
 

@@ -108,6 +108,18 @@ final class IdentityAssociations
         }
     }
 
+    public function finalizeMembership(int $person,string $status,string $evidence,int $actor): array
+    {
+        if(!$this->batchMode||!in_array($status,['unknown','active','inactive','former','trial'],true)||trim($evidence)==='')throw new RuntimeException('MEMBERSHIP_EVIDENCE_REQUIRED');
+        $q=$this->db->prepare("SELECT id FROM app_users WHERE id=? AND role='admin' AND is_active=1 FOR UPDATE");$q->execute([$actor]);if(!$q->fetchColumn())throw new RuntimeException('ADMIN_REVIEW_REQUIRED');
+        $q=$this->db->prepare("SELECT l.external_id FROM identity_links l JOIN cognito_waivers w ON w.source_locator=l.external_id AND w.student_person_id=l.person_id WHERE l.person_id=? AND l.source_system='cognito' AND l.source_type='waiver' AND l.source_role='student' AND l.match_status='confirmed' AND l.reviewed_by IS NOT NULL AND l.reviewed_at IS NOT NULL ORDER BY l.id LIMIT 1 FOR UPDATE");$q->execute([$person]);$external=$q->fetchColumn();if(!$external)throw new RuntimeException('VERIFIED_STUDENT_REQUIRED');
+        $q=$this->db->prepare('SELECT id,person_id,member_status,member_since,member_until,created_at,updated_at FROM members WHERE person_id=? FOR UPDATE');$q->execute([$person]);$before=$q->fetch()?:null;
+        if($before===null)$this->supplement('cognito','waiver',$external,'student',$person,$actor,true,[]);
+        $q=$this->db->prepare('UPDATE members SET member_status=? WHERE person_id=?');$q->execute([$status,$person]);
+        $q=$this->db->prepare('SELECT id,person_id,member_status,member_since,member_until,created_at,updated_at FROM members WHERE person_id=?');$q->execute([$person]);$after=$q->fetch();
+        $this->audit($actor,'membership_finalized','members',(string)$after['id'],['person_id'=>$person,'before'=>$before,'after'=>$after,'evidence'=>$evidence]);return ['created'=>$before===null,'member_id'=>(int)$after['id']];
+    }
+
     public function removeReviewedRelationship(array $relationship, int $actor): void
     {
         if (!$this->batchMode || count($relationship) !== 3) { throw new RuntimeException('REVIEW_TRANSACTION_REQUIRED'); }

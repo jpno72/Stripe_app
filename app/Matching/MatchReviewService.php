@@ -171,7 +171,7 @@ final class MatchReviewService
         $relations = $role === 'student' && $selfLabel ? [[$person,$person,'self']] : [];
         array_push($created['relationship_refs'], ...$relations);
         $relations = $this->newRelationships($relations);
-        $this->associate($identity,$candidate,$role,$person,$actor,$created,$role === 'student' && !$memberExists,$relations,$reconfirm);
+        $this->associate($identity,$candidate,$role,$person,$actor,$created,$role === 'student' && !$memberExists && ($input['member_verified']??'')==='1',$relations,$reconfirm);
         return 'confirmed';
     }
 
@@ -200,7 +200,7 @@ final class MatchReviewService
         }
         array_push($created['relationship_refs'], ...$relationships);
         $freshRelationships = $this->newRelationships($relationships);
-        $this->associate($identity,$candidate,'student',$student,$actor,$created,!$this->memberExists($student),$freshRelationships,$groupRelationship);
+        $this->associate($identity,$candidate,'student',$student,$actor,$created,!$this->memberExists($student) && ($input['member_verified']??'')==='1',$freshRelationships,$groupRelationship);
         return $this->role($candidate) === 'signer' && $payer === $signer ? 'confirmed' : 'rejected';
     }
 
@@ -209,7 +209,7 @@ final class MatchReviewService
         $person = $this->personId(trim((string)($input['person_bma'] ?? '')));
         $side = (string)($input['side'] ?? '');
         if (!in_array($side,['stripe','signer','student'],true)) { throw new RuntimeException('INVALID_LINK_SIDE'); }
-        $this->associate($identity,$candidate,$side,$person,$actor,$created,$side === 'student' && !$this->memberExists($person));
+        $this->associate($identity,$candidate,$side,$person,$actor,$created,$side === 'student' && !$this->memberExists($person) && ($input['member_verified']??'')==='1');
         return 'possible';
     }
 
@@ -219,7 +219,7 @@ final class MatchReviewService
         $name = $this->role($candidate) === 'signer' ? $candidate['signer_print_name'] : $candidate['source_name'];
         $other = $this->newPerson($name,$created);
         $this->associate($identity,$candidate,'stripe',$payer,$actor,$created);
-        $this->associate($identity,$candidate,$this->role($candidate),$other,$actor,$created,$this->role($candidate) === 'student');
+        $this->associate($identity,$candidate,$this->role($candidate),$other,$actor,$created,false);
         return 'rejected';
     }
 
