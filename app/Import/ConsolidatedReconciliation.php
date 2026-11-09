@@ -102,7 +102,9 @@ final class ConsolidatedReconciliation
             $p['household_issues']=array_values(array_unique(array_intersect($p['issues'],$householdCodes)));
             $p['issues']=array_values(array_diff($p['issues'],$householdCodes));
             $p['household_payment_references']=count(array_unique(array_column($paymentRows[$gid]??[],'Payment ID')));
-            $p['apply_ready']=!$p['requires_student_approval']&&$p['household_issues']===[];
+            $householdRequested=$a['payer_verified']||$a['payer_student_verified']||$a['signer_verified']||$a['same_person_verified']||$a['parent_relationship_verified'];
+            // Student-only approval must not implicitly approve or be blocked by a separate payer proposal.
+            $p['apply_ready']=!$p['requires_student_approval']&&($p['household_issues']===[]||!$householdRequested);
             $p['issues']=array_values(array_unique($p['issues']));$p['proposals']=array_values(array_unique($p['proposals']));$p['ready']=$p['issues']===[]&&$p['waivers']!==[];
             if($p['ready']){++$summary['groups_ready'];foreach(array_unique($p['entities']) as $key)$claims[$key]=true;if($p['demographics']!==[])++$summary['demographic_profiles_to_populate'];if($payerKey!==null)foreach($p['customers'] as $c)if($c['person_id']===null)++$summary['payer_associations_to_link'];foreach($p['waivers'] as $w)if(isset($p['signer_keys'][$w['source_locator']])&&$w['signer_person_id']===null)++$summary['signers_to_link'];}
             else{++$summary['student_identities_unresolved'];++$summary['conflicts_requiring_review'];}
