@@ -9,15 +9,29 @@ final class MemberProfileRepository
     private function rows(string $sql,array $params=[]): array {$q=$this->db->prepare(AppTime::calendarSql($sql));$q->execute($params);return $q->fetchAll();}
     public function find(MemberProfileIdentifier $identifier): ?array
     {
+        if($identifier->personId!==null){$m=$this->rows('SELECT id FROM members WHERE person_id=?',[$identifier->personId]);return $m!==[]?$this->find(new MemberProfileIdentifier((int)$m[0]['id'],null)):$this->findPerson($identifier);}
         $field=$identifier->memberId!==null?'m.member_id':'m.bma_person_id';$value=$identifier->memberId??$identifier->bma;
         $rows=$this->rows("SELECT m.member_id,m.person_id,m.bma_person_id,m.member_name,m.member_status,m.member_since,m.member_until,CASE WHEN p.birth_date<=CURRENT_DATE() THEN TIMESTAMPDIFF(YEAR,p.birth_date,CURRENT_DATE()) ELSE NULL END age_years,p.email,p.phone,p.city,p.state,p.postal_code,
           f.payer_count,f.payer_person_id,f.payer_member_count,f.financial_attribution_status,f.subscription_allocation_status,
           CASE WHEN m.member_status='active' AND (m.member_until IS NULL OR m.member_until>=CURRENT_DATE()) THEN 'Active' WHEN m.member_status='unknown' AND (m.member_until IS NULL OR m.member_until>=CURRENT_DATE()) THEN 'Unknown' ELSE 'Inactive / non-active' END activity_label
           FROM vw_member_summary m JOIN people p ON p.id=m.person_id JOIN vw_member_demographics d ON d.member_id=m.member_id JOIN vw_member_financial_summary f ON f.member_id=m.member_id WHERE $field=?",[$value]);
-        return $rows[0]??null;
+        return $rows[0]??($identifier->bma!==null?$this->findPerson($identifier):null);
+    }
+    private function findPerson(MemberProfileIdentifier $id): ?array
+    {
+        $field=$id->personId!==null?'p.id':'p.bma_person_id';$value=$id->personId??$id->bma;
+        $rows=$this->rows("SELECT NULL member_id,p.id person_id,p.bma_person_id,TRIM(CONCAT_WS(' ',p.first_name,p.middle_name,p.last_name)) member_name,'not_verified' member_status,NULL member_since,NULL member_until,CASE WHEN p.birth_date<=CURRENT_DATE() THEN TIMESTAMPDIFF(YEAR,p.birth_date,CURRENT_DATE()) ELSE NULL END age_years,p.email,p.phone,p.city,p.state,p.postal_code,'Membership not verified' activity_label FROM people p WHERE $field=? AND EXISTS(SELECT 1 FROM identity_links l WHERE l.person_id=p.id AND l.match_status='confirmed')",[$value]);return $rows[0]??null;
+    }
+    public function consolidatedSources(int $person,array $config): array
+    {
+        require_once dirname(__DIR__).'/Import/ConsolidatedInputs.php';
+        $m=$this->rows("SELECT external_id FROM identity_links WHERE person_id=? AND source_system='manual' AND source_type='consolidated_waiver' AND match_status='confirmed'",[$person]);$ids=array_column($this->rows("SELECT w.source_record_id FROM cognito_waivers w JOIN identity_links l ON l.source_system='cognito' AND l.source_type='waiver' AND l.source_role='student' AND l.external_id=w.source_locator AND l.person_id=w.student_person_id AND l.match_status='confirmed' WHERE l.person_id=?",[$person]),'source_record_id');$groups=[];foreach($m as $row){$id=substr($row['external_id'],strlen('bma3y-v1:'));if(preg_match('/\ABMA-W-[0-9]{4,}\z/D',$id))$groups[$id]=$ids;}
+        if($groups===[])return [];return ConsolidatedInputs::supplemental($groups,ConsolidatedInputs::directory(),Paths::servedRoots($config),MemberProfileAccess::canViewEmergencyContacts($this->db,$config),MemberProfileAccess::canReview($this->db,$config));
     }
     public function payers(int $member): array
     {
+        if($member<0){$person=-$member;$rows=$this->rows("SELECT p.id payer_person_id,p.bma_person_id,TRIM(CONCAT_WS(' ',p.first_name,p.middle_name,p.last_name)) payer_name,p.id=? is_self,CASE WHEN p.id=? THEN 'self account' ELSE 'payer' END relationships,0 member_count FROM people p WHERE (p.id=? AND EXISTS(SELECT 1 FROM stripe_customers c JOIN identity_links own ON own.source_system='stripe' AND own.source_type='customer' AND own.source_role='customer' AND own.external_id=c.stripe_customer_id AND own.person_id=c.person_id AND own.match_status='confirmed' WHERE c.person_id=p.id)) OR EXISTS(SELECT 1 FROM person_relationships r WHERE r.person_id=p.id AND r.related_person_id=? AND r.relationship_type='payer')",[$person,$person,$person,$person]);}
+        else
         $rows=$this->rows("SELECT scope.payer_person_id,p.bma_person_id,TRIM(CONCAT_WS(' ',p.first_name,p.middle_name,p.last_name)) payer_name,
           scope.payer_person_id=scope.member_person_id is_self,
           (SELECT GROUP_CONCAT(DISTINCT r.relationship_type ORDER BY r.relationship_type SEPARATOR ', ') FROM person_relationships r WHERE r.person_id=scope.payer_person_id AND r.related_person_id=scope.member_person_id) relationships,
@@ -31,6 +45,7 @@ final class MemberProfileRepository
     }
     public function subscriptions(int $member): array
     {
+        if($member<0)return [];
         $rows=$this->rows("SELECT s.subscription_id,s.stripe_subscription_id,s.stripe_customer_id,s.subscription_status,s.subscription_started_at,s.canceled_at,s.current_period_start,s.current_period_end,s.explicitly_linked_member_count,
           EXISTS(SELECT 1 FROM subscription_members current_map WHERE current_map.subscription_id=s.subscription_id AND current_map.member_id=? AND (current_map.valid_from IS NULL OR current_map.valid_from<=CURRENT_DATE()) AND (current_map.valid_until IS NULL OR current_map.valid_until>=CURRENT_DATE())) current_assignment
           FROM vw_subscription_summary s WHERE EXISTS(SELECT 1 FROM subscription_members map WHERE map.subscription_id=s.subscription_id AND map.member_id=?) ORDER BY s.subscription_id DESC",[$member,$member]);
@@ -41,7 +56,7 @@ final class MemberProfileRepository
         // No sensitive columns are selected unless the current session and canonical permissions allow it.
         $emergency=$emergencyAccessConfig!==null && MemberProfileAccess::canViewEmergencyContacts($this->db,$emergencyAccessConfig)
             ? ',w.emergency_contact_name,w.emergency_contact_phone' : '';
-        return $this->rows("SELECT w.source_record_id,w.source_id_kind,w.form_namespace,w.source_locator,COALESCE(JSON_UNQUOTE(JSON_EXTRACT(raw.raw_values, '$.\"Date Submitted\"')),JSON_UNQUOTE(JSON_EXTRACT(raw.raw_values, '$.Entry_DateSubmitted'))) original_submitted_at,w.submitted_at,w.source_timezone,w.signed_date,w.signer_print_name,w.relationship_to_student,w.interpretation_status,
+        return $this->rows("SELECT w.source_record_id,w.source_id_kind,w.form_namespace,w.source_locator,COALESCE(JSON_UNQUOTE(JSON_EXTRACT(raw.raw_values, '$.\"Date Submitted\"')),JSON_UNQUOTE(JSON_EXTRACT(raw.raw_values, '$.Entry_DateSubmitted'))) original_submitted_at,w.submitted_at,w.source_timezone,w.source_name,w.contact_email,w.contact_phone,w.address_text,w.signed_date,w.signer_print_name,w.relationship_to_student,w.interpretation_status,
           TRIM(CONCAT_WS(' ',signer.first_name,signer.middle_name,signer.last_name)) signer_name,signer.bma_person_id signer_bma,
           student_link.match_status student_link_status,signer_link.match_status signer_link_status$emergency
           FROM cognito_waivers w LEFT JOIN raw_cognito_waivers raw ON raw.id=w.latest_raw_id JOIN identity_links student_link ON student_link.source_system='cognito' AND student_link.source_type='waiver' AND student_link.source_role='student' AND student_link.external_id=w.source_locator AND student_link.match_status IN ('automatic','confirmed')
@@ -57,10 +72,19 @@ final class MemberProfileRepository
     }
     private function paymentWhere(int $member,string $currency,array &$params,string $search=''): string
     {
-        $params[]=$member;$where=" WHERE EXISTS(SELECT 1 FROM vw_payer_member_scope scope WHERE scope.member_id=? AND scope.payer_person_id=t.payer_person_id)";
+        if($member<0){$person=-$member;$params[]=$person;$params[]=$person;$where=" WHERE (t.payer_person_id=? OR EXISTS(SELECT 1 FROM person_relationships r WHERE r.person_id=t.payer_person_id AND r.related_person_id=? AND r.relationship_type='payer'))";}
+        else{$params[]=$member;$where=" WHERE EXISTS(SELECT 1 FROM vw_payer_member_scope scope WHERE scope.member_id=? AND scope.payer_person_id=t.payer_person_id)";}
         if($currency!==''){$where.=' AND t.currency=?';$params[]=$currency;}
         if($search!==''){$where.=" AND (t.stripe_charge_id LIKE ? ESCAPE '!' OR t.stripe_invoice_id LIKE ? ESCAPE '!' OR t.status LIKE ? ESCAPE '!' OR TRIM(CONCAT_WS(' ',payer.first_name,payer.last_name)) LIKE ? ESCAPE '!')";$like='%'.str_replace(['!','%','_'],['!!','!%','!_'],mb_substr(trim($search),0,100)).'%';array_push($params,$like,$like,$like,$like);}
         return $where;
+    }
+    public function chargeDescriptions(int $member,string $currency): array
+    {
+        $params=[];$where=$this->paymentWhere($member,$currency,$params);return $this->rows("SELECT t.currency,NULLIF(TRIM(tx.description),'') description,COUNT(*) occurrence_count FROM vw_transaction_summary t JOIN stripe_transactions tx ON tx.id=t.transaction_id".$where." AND t.is_paid=1 GROUP BY t.currency,NULLIF(TRIM(tx.description),'') ORDER BY occurrence_count DESC",$params);
+    }
+    public function payerSubscriptions(array $payers): array
+    {
+        $ids=array_map('intval',array_column($payers,'payer_person_id'));if($ids===[])return [];$marks=implode(',',array_fill(0,count($ids),'?'));return $this->rows("SELECT s.stripe_subscription_id,s.status,s.stripe_subscription_started_at,c.stripe_customer_id FROM stripe_subscriptions s JOIN stripe_customers c ON c.id=s.customer_id JOIN identity_links l ON l.source_system='stripe' AND l.source_type='customer' AND l.source_role='customer' AND l.external_id=c.stripe_customer_id AND l.person_id=c.person_id AND l.match_status='confirmed' WHERE l.person_id IN ($marks) ORDER BY s.id",$ids);
     }
     public function paymentCurrencies(int $member): array
     {

@@ -6,10 +6,11 @@ require_once dirname(__DIR__).'/app/Matching/BulkExactMatchService.php';
 require_once dirname(__DIR__).'/src/Migrations.php';
 if(!in_array(getenv('DB_HOST'),['localhost','127.0.0.1'],true))throw new RuntimeException('Local disposable database required');
 final class BulkFaultPDO extends PDO {
-    public int $failAt=0;private int $updates=0;private int $memberAt=0;private int $memberUpdates=0;
+    public int $failAt=0;private int $updates=0;private int $memberAt=0;private int $memberUpdates=0;private int $consolidatedAt=0;private int $consolidatedUpdates=0;
+    public function armConsolidated(int $at):void{$this->consolidatedAt=$at;$this->consolidatedUpdates=0;}
     public function armMembership(int $at):void{$this->memberAt=$at;$this->memberUpdates=0;}
     public function arm(int $at):void{$this->failAt=$at;$this->updates=0;}
-    public function prepare(string $query,array $options=[]):PDOStatement|false{if($this->memberAt>0&&str_starts_with($query,'UPDATE members SET member_status')&&++$this->memberUpdates===$this->memberAt)throw new RuntimeException('SYNTHETIC_MEMBERSHIP_FAILURE');if($this->failAt>0&&str_starts_with($query,'UPDATE identity_match_candidates SET match_status')&&++$this->updates===$this->failAt)throw new RuntimeException('SYNTHETIC_PARTIAL_FAILURE');return parent::prepare($query,$options);}
+    public function prepare(string $query,array $options=[]):PDOStatement|false{if($this->consolidatedAt>0&&str_starts_with($query,'INSERT INTO identity_links(person_id')&&++$this->consolidatedUpdates===$this->consolidatedAt)throw new RuntimeException('SYNTHETIC_RECONCILIATION_FAILURE');if($this->memberAt>0&&str_starts_with($query,'UPDATE members SET member_status')&&++$this->memberUpdates===$this->memberAt)throw new RuntimeException('SYNTHETIC_MEMBERSHIP_FAILURE');if($this->failAt>0&&str_starts_with($query,'UPDATE identity_match_candidates SET match_status')&&++$this->updates===$this->failAt)throw new RuntimeException('SYNTHETIC_PARTIAL_FAILURE');return parent::prepare($query,$options);}
 }
 $dsn='mysql:host='.getenv('DB_HOST').';port='.getenv('DB_PORT').';charset=utf8mb4';$db=new BulkFaultPDO($dsn,getenv('DB_USERNAME'),getenv('DB_PASSWORD'),[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC,PDO::ATTR_EMULATE_PREPARES=>false]);
 $name='bma_schema_test_bulk_'.bin2hex(random_bytes(6));$dir=sys_get_temp_dir().'/'.$name;mkdir($dir,0700);mkdir($dir.'/sessions',0700);$server=null;$checks=0;
@@ -75,6 +76,7 @@ try{
  if(getenv('BMA_TEST_GROUP_CASES')==='1'){require_once __DIR__.'/grouped-match-cases.php';runGroupedCases($db,$q,$reset,$pair,$hash,$users);$reset();$pair();$p=$service->preview($users['admin']);}
  if(getenv('BMA_TEST_SCORE_CASES')==='1'){require_once __DIR__.'/bulk-score-cases.php';runBulkScoreCases($db,$q,$reset,$pair,$hash,$users);$reset();$pair();$p=$service->preview($users['admin']);}
  if(getenv('BMA_TEST_FINALIZATION_CASES')==='1'){require_once __DIR__.'/member-finalization-cases.php';runFinalizationCases($db,$q,$reset,$pair,$hash,$users);$reset();$pair();$p=$service->preview($users['admin']);}
+ if(getenv('BMA_TEST_CONSOLIDATED_CASES')==='1'){require_once __DIR__.'/consolidated-cases.php';runConsolidatedCases($db,$q,$reset,$pair,$hash,$users,$dir);$reset();$pair();$p=$service->preview($users['admin']);}
  // Real local authentication/CSRF requests, never production.
  $config=['APP_ENV'=>'test','DB_HOST'=>(string)getenv('DB_HOST'),'DB_PORT'=>(string)getenv('DB_PORT'),'DB_DATABASE'=>$name,'DB_USERNAME'=>(string)getenv('DB_USERNAME'),'DB_PASSWORD'=>(string)getenv('DB_PASSWORD'),'PUBLIC_WEB_ROOT'=>dirname(__DIR__).'/public','APP_KEY'=>bin2hex(random_bytes(32)),'SESSION_SAVE_PATH'=>$dir.'/sessions','SESSION_COOKIE_NAME'=>'bma_bulk_fixture','APP_ERROR_LOG'=>$dir.'/errors.log'];
  file_put_contents($dir.'/config.php','<?php return '.var_export($config,true).';');foreach(['BMA_CONFIG_FILE'=>$dir.'/config.php','BMA_APP_ROOT'=>dirname(__DIR__),'PUBLIC_WEB_ROOT'=>dirname(__DIR__).'/public'] as $key=>$val)putenv($key.'='.$val);
@@ -96,6 +98,7 @@ try{
  if(getenv('BMA_TEST_SCORE_CASES')==='1')runBulkScoreHttpCases($db,$q,$reset,$pair,$hash,$http,$cookie,$users);
  if(getenv('BMA_TEST_GROUP_CASES')==='1')runGroupedHttpCases($db,$q,$reset,$pair,$hash,$http,$cookie,$users);
  if(getenv('BMA_TEST_FINALIZATION_CASES')==='1')runFinalizationHttpCases($db,$q,$reset,$pair,$hash,$http,$cookie,$users);
+ if(getenv('BMA_TEST_CONSOLIDATED_CASES')==='1')runConsolidatedHttpCases($db,$q,$reset,$pair,$hash,$http,$cookie,$users);
  $dashboard=(int)$q("SELECT id FROM dashboards WHERE dashboard_key='matches'")->fetchColumn();$q("INSERT INTO user_dashboard_overrides(user_id,dashboard_id,permission) VALUES (?,?,'DENY')",[$users['admin'],$dashboard]);[$code]=$http('/admin/bulk-matches.php',$cookie);bulkCheck($code===403,'Matches dashboard denial also protects bulk preview');
  echo (getenv('BMA_TEST_SCORE_CASES')==='1'?'Bulk exact + score checks: ':'Bulk exact checks: ').$checks.PHP_EOL;
 }finally{if(is_resource($server)){proc_terminate($server);proc_close($server);}if($db->inTransaction())$db->rollBack();$db->exec('DROP DATABASE `'.$name.'`');foreach(new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir,FilesystemIterator::SKIP_DOTS),RecursiveIteratorIterator::CHILD_FIRST) as $f){if($f->isDir())rmdir($f->getPathname());else unlink($f->getPathname());}rmdir($dir);}

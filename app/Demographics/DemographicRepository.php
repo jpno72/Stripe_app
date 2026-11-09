@@ -23,6 +23,10 @@ final class DemographicRepository
         if($f->to!==null){$w[]='m.member_since<=?';$params[]=$f->to;}
         return ' WHERE '.implode(' AND ',$w);
     }
+    public function participantCoverage(): array
+    {
+        return $this->rows("SELECT COUNT(*) verified_students,COUNT(p.birth_date) known_birth_dates,SUM(NOT EXISTS(SELECT 1 FROM members m WHERE m.person_id=p.id)) without_membership FROM people p WHERE EXISTS(SELECT 1 FROM identity_links l JOIN cognito_waivers w ON w.source_locator=l.external_id AND w.student_person_id=l.person_id WHERE l.person_id=p.id AND l.source_system='cognito' AND l.source_type='waiver' AND l.source_role='student' AND l.match_status='confirmed')")[0];
+    }
     public function options(): array
     {
         return ['programs'=>$this->db->query('SELECT DISTINCT product_name FROM vw_subscription_item_rates WHERE product_name IS NOT NULL ORDER BY product_name')->fetchAll(PDO::FETCH_COLUMN),

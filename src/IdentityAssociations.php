@@ -108,6 +108,15 @@ final class IdentityAssociations
         }
     }
 
+    /** Stable consolidated group -> person mapping; no imported private values in evidence or audit. */
+    public function mapConsolidatedGroup(string $group,int $person,int $actor): void
+    {
+        if(!$this->batchMode||!preg_match('/\ABMA-W-[0-9]{4,}\z/D',$group))throw new RuntimeException('INVALID_CONSOLIDATED_GROUP');
+        $q=$this->db->prepare("SELECT id FROM app_users WHERE id=? AND role='admin' AND is_active=1 FOR UPDATE");$q->execute([$actor]);if(!$q->fetchColumn())throw new RuntimeException('ADMIN_REVIEW_REQUIRED');
+        $external='bma3y-v1:'.$group;$q=$this->db->prepare("SELECT person_id,match_status FROM identity_links WHERE source_system='manual' AND source_type='consolidated_waiver' AND external_id=? AND source_role='student' FOR UPDATE");$q->execute([$external]);foreach($q as $old){if($old['match_status']==='rejected'||(int)$old['person_id']!==$person)throw new RuntimeException('CONSOLIDATED_IDENTITY_CONFLICT');if($old['match_status']==='confirmed')return;}
+        $q=$this->db->prepare("INSERT INTO identity_links(person_id,source_system,source_type,external_id,source_role,match_method,match_reason,match_status,reviewed_by,reviewed_at) VALUES (?,'manual','consolidated_waiver',?,'student','manual_reconciliation','reviewed_source_references','confirmed',?,UTC_TIMESTAMP(6))");$q->execute([$person,$external,$actor]);$this->audit($actor,'consolidated_group_linked','identity_links',(string)$this->db->lastInsertId(),['group_id'=>$group,'person_id'=>$person]);
+    }
+
     public function finalizeMembership(int $person,string $status,string $evidence,int $actor): array
     {
         if(!$this->batchMode||!in_array($status,['unknown','active','inactive','former','trial'],true)||trim($evidence)==='')throw new RuntimeException('MEMBERSHIP_EVIDENCE_REQUIRED');

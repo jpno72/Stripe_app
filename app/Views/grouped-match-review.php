@@ -13,7 +13,7 @@ function renderGroupedMatchReview(array $queue,string $search,string $status): v
     <div class="match-review grouped-review">
       <header class="review-page-header"><div><span class="review-eyebrow">IDENTITY WORKSPACE</span><h1>Review people, once</h1><p>Compatible accounts and repeated waivers together. Every source record stays intact.</p></div><a class="btn btn-outline-secondary" href="matches.php?view=raw">Raw candidate view</a></header>
       <?php foreach(['match_review_notice'=>'success','match_review_error'=>'danger'] as $key=>$tone)if(isset($_SESSION[$key])): ?><div class="alert alert-<?= e($tone) ?>" role="status"><?= e($_SESSION[$key]) ?></div><?php unset($_SESSION[$key]);endif; ?>
-      <p><a class="btn btn-outline-primary" href="finalize-members.php">Finalize People &amp; Members</a></p>
+      <p><a class="btn btn-outline-primary" href="finalize-members.php">Finalize People &amp; Members</a> <a class="btn btn-outline-primary" href="reconcile-consolidated.php">Consolidated Source Preview</a></p>
       <section class="group-stats" aria-label="Review workload">
       <?php foreach(['groups_needing_decision'=>'Groups needing decisions','candidate_records'=>'Candidate comparisons','waivers_represented'=>'Waivers represented','existing_people'=>'Existing BMA people','unresolved_conflicts'=>'Groups with conflicts'] as $key=>$label): ?><div class="group-stat"><strong><?= e($s[$key]) ?></strong><span><?= e($label) ?></span></div><?php endforeach; ?>
       </section>

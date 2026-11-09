@@ -101,7 +101,7 @@ final class BulkExactMatchService
             'cognito_waivers'=>'id,source_record_id,submitted_at,contact_phone,address_text,source_locator,source_name,signer_print_name,contact_email,source_format,source_name_role,relationship_to_student,student_birth_date,signer_person_id,student_person_id,updated_at',
             'identity_match_candidates'=>'id,stripe_customer_id,cognito_waiver_id,waiver_role,match_score,(match_score > 0.50) AS score_above_half,match_status,match_method,match_reason,evidence,hard_conflict,reviewed_by,reviewed_at,updated_at',
             'identity_links'=>'id,person_id,source_system,source_type,external_id,source_role,match_status,match_method,match_score,match_reason,match_evidence,reviewed_by,reviewed_at,updated_at',
-            'people'=>'id,bma_person_id,first_name,middle_name,last_name,email,email_normalized,birth_date,updated_at',
+            'people'=>'id,bma_person_id,first_name,middle_name,last_name,email,email_normalized,birth_date,phone,phone_normalized,street_address,address_line2,city,state,postal_code,country,updated_at',
             'members'=>'id,person_id,member_status,member_since,member_until,updated_at',
             'person_relationships'=>'id,person_id,related_person_id,relationship_type',
         ];$data=[];

@@ -7,7 +7,7 @@ $config=adminConfig();requireDashboardAccess('demographics');
 if(($_SERVER['REQUEST_METHOD']??'GET')!=='GET'){http_response_code(405);header('Allow: GET');exit('Read-only report.');}
 try {
     $brackets=new AgeBrackets();$filters=DemographicFilters::fromRequest($_GET,$brackets);
-    $repo=new DemographicRepository(bmaDatabase($config),$brackets);$options=$repo->options();$data=$repo->overview($filters);$cards=DemographicMetrics::cards($data['stats']);$error=null;
+    $repo=new DemographicRepository(bmaDatabase($config),$brackets);$options=$repo->options();$participants=$repo->participantCoverage();$data=$repo->overview($filters);$cards=DemographicMetrics::cards($data['stats']);$error=null;
 } catch(InvalidArgumentException $exception){http_response_code(400);$error=$exception->getMessage();}
 catch(Throwable){Security::log($config,'REPORT_UNAVAILABLE');http_response_code(503);$error='Demographics are unavailable. Check the reporting database and age-bracket configuration.';}
 uiLayoutStart('Demographics','demographics','Member age and geography, with unknown information kept visible.', ['https://cdn.datatables.net/v/bs5/dt-3.1.3/datatables.min.css','/assets/css/demographics.css']);
@@ -22,6 +22,7 @@ if($error!==null){uiAlert($error);uiEmptyState('Demographics unavailable','Corre
 <div class="col-6 col-md-3"><label class="form-label" for="demo-to">Member cohort through</label><input class="form-control" id="demo-to" type="date" name="to" value="<?=uiEscape($filters->to)?>"></div>
 <div class="col-12 col-md-3 d-flex gap-2"><button class="btn btn-primary" type="submit">Apply filters</button><a class="btn btn-outline-secondary" href="/demographics">Reset</a></div></div></form>
 <?php
+uiAlert('Verified student coverage: '.$participants['verified_students'].' unique people; '.($participants['verified_students']-$participants['known_birth_dates']).' missing DOB; '.($participants['without_membership']??0).' without a member record. The charts below remain the selected member cohort.','info');
 uiAlert($data['stats']['total_members'].' members in this scope, as of '.$data['as_of'].' '.AppTime::name().'. Ages use known member demographics only. Cohort dates refer to factual membership starts; applying a cohort filter excludes unknown starts.','info');
 if((int)$data['stats']['total_members']===0){uiEmptyState('No members match these filters','Broaden the filters or review the available member records.');}
 echo '<div class="row g-3 mb-4">';foreach($cards as [$label,$value,$detail]){echo '<div class="col-12 col-sm-6 col-xl-4">';uiKpiCard($label,$value,$detail);echo '</div>';}echo '</div>';
