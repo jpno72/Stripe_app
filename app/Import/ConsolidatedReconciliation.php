@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/ConsolidatedInputs.php';
+require_once __DIR__.'/HistoricalPaymentPreview.php';
+require_once dirname(__DIR__).'/Matching/IdentityReviewGroups.php';
 require_once dirname(__DIR__).'/Matching/BulkExactMatchService.php';
 require_once dirname(__DIR__,2).'/src/People.php';
 
@@ -19,9 +21,17 @@ final class ConsolidatedReconciliation
         }ksort($out);return $out;
     }
     private function counts(): array {$out=[];foreach(['people','members','identity_links','person_relationships','cognito_waivers','stripe_customers','stripe_transactions','stripe_subscriptions','audit_log'] as $t)$out[$t]=(int)$this->db->query('SELECT COUNT(*) FROM '.$t)->fetchColumn();return $out;}
-    public function preview(int $actor,array $input,array $approvals=[]): array
+    public function preview(int $actor,array $input,array $approvals=[],?array $historical=null): array
     {
-        return $this->bulk->reviewTransaction($actor,fn(IdentityAssociations $identity)=>$this->plan($this->bulk->lockedReviewState(),$input,self::approvals($approvals)));
+        return $this->bulk->reviewTransaction($actor,function(IdentityAssociations $identity)use($input,$approvals,$historical){
+            $state=$this->bulk->lockedReviewState();$p=$this->plan($state,$input,self::approvals($approvals));
+            $p['payment_coverage']=(new HistoricalPaymentPreview($this->db))->preview(array_column($input['payments'],'Payment ID'),$historical);
+            $p['summary']+= $p['payment_coverage']['summary'];
+            $projection=IdentityReviewGroups::build($state);$review=[];
+            foreach($projection['groups'] as $g)if($g['needs_decision'])foreach(array_keys($g['waiver_records']) as $wid)$review[$wid][]=$g['id'];
+            foreach($p['groups'] as &$g){$g['review_groups']=[];foreach($g['waivers'] as $w)$g['review_groups']=array_merge($g['review_groups'],$review[$w['id']]??[]);$g['review_groups']=array_values(array_unique($g['review_groups']));}unset($g);
+            return $p;
+        });
     }
     private static function dob(string $s): ?string
     {
@@ -34,6 +44,7 @@ final class ConsolidatedReconciliation
         $held=[];foreach($data['identity_match_candidates'] as $c)if($c['match_reason']==='manual_review_pending'||($c['match_status']==='rejected'&&$c['match_reason']!=='manual_confirm_relationship'))$held[(int)$c['cognito_waiver_id']]=true;
         $groups=[];$seenWaivers=[];$duplicates=[];$payments=[];$paymentRows=[];$evidenceNameConflicts=[];
         foreach($input['groups'] as $g){$id=$g['Group ID'];if(isset($groups[$id]))throw new RuntimeException('DUPLICATE_GROUP_ID');$groups[$id]=$g;}
+        $waiverGroups=[];foreach($groups as $gid=>$g)foreach(ConsolidatedInputs::parts($g['Waiver IDs']) as $wid)$waiverGroups[$wid][$gid]=true;
         foreach($input['duplicates'] as $d){$id=$d['Group ID'];if(!isset($groups[$id])||isset($duplicates[$id])||ConsolidatedInputs::parts($d['Waiver IDs'])!==ConsolidatedInputs::parts($groups[$id]['Waiver IDs'])||(int)$d['Waivers consolidated']!==(int)$groups[$id]['Waiver count'])throw new RuntimeException('DUPLICATE_MANIFEST_CONFLICT');$duplicates[$id]=true;}
         foreach($input['payments'] as $r){if(!isset($groups[$r['Group ID']])||!preg_match('/\A(?:pi|ch|py)_[A-Za-z0-9]+\z/D',$r['Payment ID']))throw new RuntimeException('PAYMENT_REFERENCE_INVALID');if(!MatchScorer::namesCompatible($r['Student'],$groups[$r['Group ID']]['Student name']))$evidenceNameConflicts[$r['Group ID']]=true;$payments[$r['Payment ID']]=true;$paymentRows[$r['Group ID']][]=$r;}
         // Resolve actual imported IDs once. Multiple charges sharing a PaymentIntent remain an ambiguity.
@@ -43,7 +54,7 @@ final class ConsolidatedReconciliation
         $plans=[];$entities=[];$claims=[];$accountOwners=[];
         foreach($groups as $gid=>$g){$a=$approvals[$gid]??self::approvals([$gid=>[]])[$gid];$p=['group_id'=>$gid,'waivers'=>[],'customers'=>[],'student_key'=>null,'payer_key'=>null,'signer_keys'=>[],'entities'=>[],'issues'=>[],'proposals'=>[],'demographics'=>[],'ready'=>false,'changed'=>false,'approval'=>$a];$existing=[];$dates=[];$names=[];$studentPreviouslyReviewed=false;if(isset($groupRejected['bma3y-v1:'.$gid]))$p['issues'][]='MANUAL_GROUP_DECISION_PROTECTED';if(isset($evidenceNameConflicts[$gid]))$p['issues'][]='EVIDENCE_STUDENT_NAME_CONFLICT';$ids=ConsolidatedInputs::parts($g['Waiver IDs']);
             if(count($ids)!==(int)$g['Waiver count'])$p['issues'][]='WAIVER_COUNT_CONFLICT';
-            foreach($ids as $id){if(!ctype_digit($id)||isset($seenWaivers[$id])){$p['issues'][]='WAIVER_GROUP_CONFLICT';continue;}$seenWaivers[$id]=$gid;$matches=$waivers[$id]??[];if($matches===[]){++$summary['waiver_source_ids_missing'];$p['issues'][]='WAIVER_SOURCE_MISSING';continue;}if(count($matches)!==1){$p['issues'][]='WAIVER_SOURCE_AMBIGUOUS';continue;}++$summary['waiver_source_ids_found'];$w=$matches[0];$p['waivers'][]=$w;
+            foreach($ids as $id){if(!ctype_digit($id)||count($waiverGroups[$id]??[])>1){$p['issues'][]='WAIVER_GROUP_CONFLICT';continue;}$seenWaivers[$id]=$gid;$matches=$waivers[$id]??[];if($matches===[]){++$summary['waiver_source_ids_missing'];$p['issues'][]='WAIVER_SOURCE_MISSING';continue;}if(count($matches)!==1){$p['issues'][]='WAIVER_SOURCE_AMBIGUOUS';continue;}++$summary['waiver_source_ids_found'];$w=$matches[0];$p['waivers'][]=$w;
                 if(isset($held[(int)$w['id']]))$p['issues'][]='MANUAL_DECISION_PROTECTED';
                 if(!MatchScorer::namesCompatible($g['Student name'],$w['source_name']))$p['issues'][]='STUDENT_NAME_CONFLICT';
                 if(!WaiverSourceRole::isStudent($w)&&$w['student_person_id']===null)$p['issues'][]='LEGACY_STUDENT_ROLE_UNVERIFIED';
@@ -58,14 +69,14 @@ final class ConsolidatedReconciliation
             if(count($dates)>1||count($existing)>1)$p['issues'][]='EXISTING_IDENTITY_OR_DOB_CONFLICT';
             $pid=$existing===[]?null:(int)array_key_first($existing);
             if($pid!==null&&isset($people[$pid])){$person=$people[$pid];if(!MatchScorer::namesCompatible(trim(implode(' ',[$person['first_name'],$person['middle_name'],$person['last_name']])),$g['Student name']))$p['issues'][]='EXISTING_PERSON_NAME_CONFLICT';if($person['birth_date']!==null&&$dates!==[]&&!isset($dates[$person['birth_date']]))$p['issues'][]='DOB_CONFLICT';}
-            if(!$studentPreviouslyReviewed&&!$a['student_verified'])$p['issues'][]='STUDENT_ADMIN_VERIFICATION_REQUIRED';
+            $p['requires_student_approval']=!$studentPreviouslyReviewed&&!$a['student_verified'];
             $studentKey=$pid===null?'student:'.$gid:'person:'.$pid;$p['student_key']=$studentKey;
             $name=$p['waivers'][0]['source_name']??null;$entities[$studentKey]=['person_id'=>$pid,'name'=>$name];$p['entities'][]=$studentKey;
             // A known distinct BMA person with the same compatible name requires explicit selection, not another allocation.
             if($pid===null)foreach($people as $old)if(MatchScorer::namesCompatible(trim(implode(' ',[$old['first_name'],$old['middle_name'],$old['last_name']])),$name))$p['issues'][]='EXISTING_PERSON_SELECTION_REQUIRED';
             $cuIds=ConsolidatedInputs::parts($g['Stripe customer ID(s)']);foreach($paymentRows[$gid]??[] as $r){if($r['Customer ID']!=='')$cuIds[]=$r['Customer ID'];foreach($found[$r['Payment ID']]??[] as $tx)if($r['Customer ID']!==''&&isset($customers[$r['Customer ID']])&&$tx['customer_id']!==null&&(int)$tx['customer_id']!==(int)$customers[$r['Customer ID']]['id'])$p['issues'][]='PAYMENT_CUSTOMER_CONFLICT';}
             $cuIds=array_values(array_unique($cuIds));sort($cuIds);$payerIds=[];
-            foreach($cuIds as $id){if(!isset($customers[$id])){$p['proposals'][]='STRIPE_CUSTOMER_MISSING';continue;}$c=$customers[$id];$p['customers'][$id]=$c;if($c['person_id']!==null)$payerIds[(int)$c['person_id']]=true;$accepted=[];foreach($scopes['stripe/'.$id.'/customer']??[] as $link)if(in_array($link['match_status'],['confirmed','automatic'],true))$accepted[]=(int)$link['person_id'];if(($c['person_id']===null&&$accepted!==[])||($c['person_id']!==null&&$accepted!==[(int)$c['person_id']]))$p['issues'][]='IDENTITY_CACHE_CONFLICT';foreach($scopes['stripe/'.$id.'/customer']??[] as $l)if($l['match_status']==='rejected'||($l['match_status']==='possible'&&$l['reviewed_at']!==null))$p['issues'][]='MANUAL_DECISION_PROTECTED';}
+            foreach($cuIds as $id){if(!isset($customers[$id])){$p['proposals'][]='STRIPE_CUSTOMER_MISSING';continue;}$c=$customers[$id];$p['customers'][$id]=$c;if($c['person_id']!==null)$payerIds[(int)$c['person_id']]=true;$accepted=[];foreach($scopes['stripe/'.$id.'/customer']??[] as $link)if(in_array($link['match_status'],['confirmed','automatic'],true))$accepted[]=(int)$link['person_id'];if(($c['person_id']===null&&$accepted!==[])||($c['person_id']!==null&&$accepted!==[(int)$c['person_id']]))$p['issues'][]='HOUSEHOLD_IDENTITY_CACHE_CONFLICT';foreach($scopes['stripe/'.$id.'/customer']??[] as $l)if($l['match_status']==='rejected'||($l['match_status']==='possible'&&$l['reviewed_at']!==null))$p['issues'][]='HOUSEHOLD_MANUAL_DECISION_PROTECTED';}
             if($a['payer_bma']!==''){if(isset($peopleBma[$a['payer_bma']]))$payerIds[(int)$peopleBma[$a['payer_bma']]]=true;else $p['issues'][]='EXISTING_PERSON_NOT_FOUND';}
             if(count($payerIds)>1)$p['issues'][]='COMPETING_PAYER_IDENTITIES';$payer=$payerIds===[]?null:(int)array_key_first($payerIds);$payerKey=null;
             if($p['customers']!==[]&&($payer!==null||$a['payer_verified'])){
@@ -74,7 +85,7 @@ final class ConsolidatedReconciliation
                 foreach($p['customers'] as $c)if(!MatchScorer::namesCompatible($sample['name'],$c['name']))$p['issues'][]='COMPETING_PAYER_NAMES';
                 if($payerKey!==$studentKey){if(!isset($entities[$payerKey]))$entities[$payerKey]=['person_id'=>$payer,'name'=>$sample['name']];$p['entities'][]=$payerKey;}$p['payer_key']=$payerKey;
             }elseif($p['customers']!==[])$p['proposals'][]='HOUSEHOLD_PAYMENT_ASSOCIATION_UNVERIFIED';
-            foreach($p['waivers'] as $w){$signerKey=null;$accepted=[];foreach($scopes['cognito/'.$w['source_locator'].'/signer']??[] as $link){if(in_array($link['match_status'],['confirmed','automatic'],true))$accepted[]=(int)$link['person_id'];if($link['match_status']==='rejected'||($link['match_status']==='possible'&&$link['reviewed_at']!==null))$p['issues'][]='MANUAL_DECISION_PROTECTED';}if(($w['signer_person_id']===null&&$accepted!==[])||($w['signer_person_id']!==null&&$accepted!==[(int)$w['signer_person_id']]))$p['issues'][]='IDENTITY_CACHE_CONFLICT';if($w['signer_person_id']!==null){$signerKey='person:'.$w['signer_person_id'];$entities[$signerKey]=['person_id'=>(int)$w['signer_person_id'],'name'=>$w['signer_print_name']];}
+            foreach($p['waivers'] as $w){$signerKey=null;$accepted=[];foreach($scopes['cognito/'.$w['source_locator'].'/signer']??[] as $link){if(in_array($link['match_status'],['confirmed','automatic'],true))$accepted[]=(int)$link['person_id'];if($link['match_status']==='rejected'||($link['match_status']==='possible'&&$link['reviewed_at']!==null))$p['issues'][]='HOUSEHOLD_MANUAL_DECISION_PROTECTED';}if(($w['signer_person_id']===null&&$accepted!==[])||($w['signer_person_id']!==null&&$accepted!==[(int)$w['signer_person_id']]))$p['issues'][]='HOUSEHOLD_IDENTITY_CACHE_CONFLICT';if($w['signer_person_id']!==null){$signerKey='person:'.$w['signer_person_id'];$entities[$signerKey]=['person_id'=>(int)$w['signer_person_id'],'name'=>$w['signer_print_name']];}
                 elseif($a['signer_verified']){if($a['signer_is_payer']&&$payerKey!==null&&MatchScorer::namesCompatible($w['signer_print_name'],$entities[$payerKey]['name']))$signerKey=$payerKey;elseif($a['signer_bma']!==''&&isset($peopleBma[$a['signer_bma']])){$chosen=$people[$peopleBma[$a['signer_bma']]];if(!MatchScorer::namesCompatible(trim(implode(' ',[$chosen['first_name'],$chosen['middle_name'],$chosen['last_name']])),$w['signer_print_name']))$p['issues'][]='SIGNER_NAME_CONFLICT';$signerKey='person:'.$peopleBma[$a['signer_bma']];$entities[$signerKey]=['person_id'=>(int)$peopleBma[$a['signer_bma']],'name'=>$w['signer_print_name']];}else $p['proposals'][]='SIGNER_SELECTION_REQUIRED';}
                 if($signerKey!==null){$p['signer_keys'][$w['source_locator']]=$signerKey;$p['entities'][]=$signerKey;}
             }
@@ -86,14 +97,20 @@ final class ConsolidatedReconciliation
             if($a['student_address_verified']&&count($addresses)===1&&trim((string)array_key_first($addresses))===$csvAddress){foreach(['street_address'=>'Address line 1','address_line2'=>'Address line 2','city'=>'City','state'=>'State','postal_code'=>'Postal code'] as $field=>$source)if(trim($g[$source])!==''&&($pid===null||empty($people[$pid][$field])))$p['demographics'][$field]=$g[$source];}
             elseif($a['student_address_verified']&&count($addresses)>1)$p['proposals'][]='ADDRESS_VALUES_REQUIRE_REVIEW';
             if($payerKey!==null&&!$a['payer_student_verified'])$p['proposals'][]='PAYER_STUDENT_RELATIONSHIP_NOT_CONFIRMED';
+            $householdCodes=['PAYMENT_CUSTOMER_CONFLICT','HOUSEHOLD_IDENTITY_CACHE_CONFLICT','HOUSEHOLD_MANUAL_DECISION_PROTECTED','COMPETING_PAYER_IDENTITIES','PAYER_PROPOSAL_CONFLICT','COMPETING_PAYER_NAMES','SIGNER_NAME_CONFLICT','PARENT_RELATIONSHIP_REQUIRES_VERIFICATION'];
+            // An unapproved/conflicting payer proposal cannot invalidate a separate student's source identity.
+            $p['household_issues']=array_values(array_unique(array_intersect($p['issues'],$householdCodes)));
+            $p['issues']=array_values(array_diff($p['issues'],$householdCodes));
+            $p['household_payment_references']=count(array_unique(array_column($paymentRows[$gid]??[],'Payment ID')));
+            $p['apply_ready']=!$p['requires_student_approval']&&$p['household_issues']===[];
             $p['issues']=array_values(array_unique($p['issues']));$p['proposals']=array_values(array_unique($p['proposals']));$p['ready']=$p['issues']===[]&&$p['waivers']!==[];
             if($p['ready']){++$summary['groups_ready'];foreach(array_unique($p['entities']) as $key)$claims[$key]=true;if($p['demographics']!==[])++$summary['demographic_profiles_to_populate'];if($payerKey!==null)foreach($p['customers'] as $c)if($c['person_id']===null)++$summary['payer_associations_to_link'];foreach($p['waivers'] as $w)if(isset($p['signer_keys'][$w['source_locator']])&&$w['signer_person_id']===null)++$summary['signers_to_link'];}
             else{++$summary['student_identities_unresolved'];++$summary['conflicts_requiring_review'];}
-            if($p['proposals']!==[])++$summary['proposed_household_groups'];if($p['ready']&&$payerKey!==null&&$a['payer_verified'])foreach($p['customers'] as $c)$accountOwners[$c['stripe_customer_id']]=$payerKey;$plans[$gid]=$p;
+            if($p['customers']!==[]||$p['household_payment_references']>0||in_array('STRIPE_CUSTOMER_MISSING',$p['proposals'],true))++$summary['proposed_household_groups'];if($p['ready']&&$payerKey!==null&&$a['payer_verified'])foreach($p['customers'] as $c)$accountOwners[$c['stripe_customer_id']]=$payerKey;$plans[$gid]=$p;
         }
         // A repeated unlinked person proposal across two groups is a conflict, never an automatic merge.
         $proposedNames=[];foreach($plans as $gid=>$g)if($g['ready']&&$entities[$g['student_key']]['person_id']===null)$proposedNames[MatchScorer::comparisonName($groups[$gid]['Student name'])][]=$gid;
-        foreach($proposedNames as $ids)if(count($ids)>1)foreach($ids as $gid){$plans[$gid]['ready']=false;$plans[$gid]['issues'][]='DUPLICATE_PERSON_PROPOSALS';}
+        foreach($proposedNames as $ids)if(count($ids)>1)foreach($ids as $gid)foreach($ids as $other){if($gid===$other)continue;$a=$plans[$gid]['demographics']['birth_date']??null;$b=$plans[$other]['demographics']['birth_date']??null;if($a===null||$b===null||$a===$b){$plans[$gid]['ready']=false;$plans[$gid]['issues'][]='DUPLICATE_PERSON_PROPOSALS';break;}}
         $payerNames=[];foreach($plans as $gid=>$g)if($g['ready']&&$g['payer_key']!==null&&$g['payer_key']!==$g['student_key']&&$entities[$g['payer_key']]['person_id']===null)$payerNames[MatchScorer::comparisonName($entities[$g['payer_key']]['name'])][$g['payer_key']][]=$gid;
         foreach($payerNames as $keys)if(count($keys)>1)foreach($keys as $gids)foreach($gids as $gid){$plans[$gid]['ready']=false;$plans[$gid]['issues'][]='DUPLICATE_PAYER_PROPOSALS';}
         foreach(['groups_ready','student_identities_unresolved','conflicts_requiring_review','new_people_proposed','existing_people_reused','demographic_profiles_to_populate','signers_to_link','payer_associations_to_link'] as $key)$summary[$key]=0;$claims=[];
@@ -111,14 +128,20 @@ final class ConsolidatedReconciliation
         $summary['member_records_supported']=count($supportedMembers);
         $summary['payer_associations_to_link']=count($payerScopes);
         $summary['signers_to_link']=count($signerScopes);
+        $students=[];$waiverScopes=[];$householdEdges=[];$acceptedPayers=[];foreach($data['person_relationships'] as $r)if(in_array($r['relationship_type'],['payer','self'],true))$acceptedPayers[$r['person_id'].'/'.$r['related_person_id']]=true;
+        $summary['groups_eligible_for_apply']=0;
+        foreach($plans as $g)if($g['ready']){$key=$g['student_key'];$pid=$entities[$key]['person_id'];$students[$pid===null?$key:'person:'.$pid]=$pid;foreach($g['waivers'] as $w)if($w['student_person_id']===null)$waiverScopes[$w['source_locator']]=true;if($g['apply_ready'])++$summary['groups_eligible_for_apply'];foreach($g['customers'] as $c){$payerId=$c['person_id'];if($pid!==null&&$payerId!==null&&($pid===$payerId||isset($acceptedPayers[$payerId.'/'.$pid])))continue;$householdEdges[$key.'/'.($g['payer_key']??'customer:'.$c['stripe_customer_id'])]=true;}}
         foreach($claims as $entity){if($entity['person_id']===null)++$summary['new_people_proposed'];else ++$summary['existing_people_reused'];}
+        $summary['new_student_people_proposed']=count(array_filter($students,static fn($pid)=>$pid===null));
+        $summary['waiver_associations_proposed']=count($waiverScopes);
+        $summary['household_payer_relationships_proposed']=count($householdEdges);
         return ['summary'=>$summary,'groups'=>$plans,'entities'=>$entities,'before_counts'=>$this->counts(),'digest'=>hash('sha256',json_encode([$state['plan']['digest'],$input,$approvals,$found],JSON_THROW_ON_ERROR))];
     }
     public function apply(int $actor,array $input,array $approvals,string $digest,string $backupReference): array
     {
         if(trim($backupReference)===''||mb_strlen($backupReference)>500||!preg_match('/\A[a-f0-9]{64}\z/D',$digest))throw new RuntimeException('EXPLICIT_REVIEW_AND_BACKUP_REQUIRED');
         return $this->bulk->reviewTransaction($actor,function(IdentityAssociations $identity)use($actor,$input,$approvals,$digest,$backupReference){$p=$this->plan($this->bulk->lockedReviewState(),$input,self::approvals($approvals));if(!hash_equals($p['digest'],$digest))throw new RuntimeException('RECONCILIATION_PREVIEW_STALE');$resolved=[];$created=0;$linked=0;$auditBefore=(int)$this->db->query('SELECT COALESCE(MAX(id),0) FROM audit_log')->fetchColumn();
-            foreach($p['groups'] as $g){if(!$g['ready'])continue;foreach(array_unique($g['entities']) as $key){if(isset($resolved[$key]))continue;$entity=$p['entities'][$key];$pid=$entity['person_id'];if($pid===null){$parts=explode(' ',trim(preg_replace('/[\s\p{Z}]+/u',' ',(string)$entity['name'])??''));$first=array_shift($parts);if($first==='')throw new RuntimeException('SOURCE_NAME_REQUIRED');$pid=(int)(new People($this->db))->createInTransaction($first,$parts===[]?null:implode(' ',$parts))['id'];++$created;}$resolved[$key]=$pid;}
+            foreach($p['groups'] as $g){if(!$g['ready']||!$g['apply_ready'])continue;foreach(array_unique($g['entities']) as $key){if(isset($resolved[$key]))continue;$entity=$p['entities'][$key];$pid=$entity['person_id'];if($pid===null){$parts=explode(' ',trim(preg_replace('/[\s\p{Z}]+/u',' ',(string)$entity['name'])??''));$first=array_shift($parts);if($first==='')throw new RuntimeException('SOURCE_NAME_REQUIRED');$pid=(int)(new People($this->db))->createInTransaction($first,$parts===[]?null:implode(' ',$parts))['id'];++$created;}$resolved[$key]=$pid;}
                 $student=$resolved[$g['student_key']];foreach($g['waivers'] as $w){if($w['student_person_id']===null){$identity->decide('cognito','waiver',$w['source_locator'],'student',$student,'confirmed',$actor);++$linked;}if(isset($g['signer_keys'][$w['source_locator']])&&$w['signer_person_id']===null){$identity->decide('cognito','waiver',$w['source_locator'],'signer',$resolved[$g['signer_keys'][$w['source_locator']]],'confirmed',$actor);++$linked;}}
                 if($g['payer_key']!==null){$payer=$resolved[$g['payer_key']];foreach($g['customers'] as $c)if($c['person_id']===null&&$g['approval']['payer_verified']){$identity->decide('stripe','customer',$c['stripe_customer_id'],'customer',$payer,'confirmed',$actor);++$linked;}}
                 $edges=[];$a=$g['approval'];if($g['payer_key']!==null&&$a['payer_student_verified']){$payer=$resolved[$g['payer_key']];$edges[]=[$payer,$student,$payer===$student?'self':'payer'];}
