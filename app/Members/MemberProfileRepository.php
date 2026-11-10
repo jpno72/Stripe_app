@@ -7,20 +7,28 @@ final class MemberProfileRepository
 {
     public function __construct(private PDO $db) {}
     private function rows(string $sql,array $params=[]): array {$q=$this->db->prepare(AppTime::calendarSql($sql));$q->execute($params);return $q->fetchAll();}
-    public function find(MemberProfileIdentifier $identifier): ?array
+    public function searchPeople(string $search): array
     {
-        if($identifier->personId!==null){$m=$this->rows('SELECT id FROM members WHERE person_id=?',[$identifier->personId]);return $m!==[]?$this->find(new MemberProfileIdentifier((int)$m[0]['id'],null)):$this->findPerson($identifier);}
+        $search=mb_substr(trim($search),0,100);$params=[];$where='';
+        if($search!==''){$like='%'.str_replace(['!','%','_'],['!!','!%','!_'],$search).'%';$where=" WHERE p.bma_person_id LIKE ? ESCAPE '!' OR CONCAT_WS(' ',p.first_name,p.middle_name,p.last_name) LIKE ? ESCAPE '!' OR p.email LIKE ? ESCAPE '!' OR p.phone LIKE ? ESCAPE '!'";$params=[$like,$like,$like,$like];}
+        return $this->rows("SELECT p.id,p.bma_person_id,TRIM(CONCAT_WS(' ',p.first_name,p.middle_name,p.last_name)) person_name,m.member_status FROM people p LEFT JOIN members m ON m.person_id=p.id".$where.' ORDER BY p.last_name,p.first_name,p.id LIMIT 50',$params);
+    }
+    public function find(MemberProfileIdentifier $identifier,bool $sensitive=false): ?array
+    {
+        if($identifier->personId!==null){$m=$this->rows('SELECT id FROM members WHERE person_id=?',[$identifier->personId]);return $m!==[]?$this->find(new MemberProfileIdentifier((int)$m[0]['id'],null),$sensitive):$this->findPerson($identifier,$sensitive);}
+        $dob=$sensitive?'p.birth_date':'NULL';
         $field=$identifier->memberId!==null?'m.member_id':'m.bma_person_id';$value=$identifier->memberId??$identifier->bma;
-        $rows=$this->rows("SELECT m.member_id,m.person_id,m.bma_person_id,m.member_name,m.member_status,m.member_since,m.member_until,CASE WHEN p.birth_date<=CURRENT_DATE() THEN TIMESTAMPDIFF(YEAR,p.birth_date,CURRENT_DATE()) ELSE NULL END age_years,p.email,p.phone,p.city,p.state,p.postal_code,
+        $rows=$this->rows("SELECT m.member_id,m.person_id,m.bma_person_id,m.member_name,m.member_status,m.member_since,m.member_until,$dob birth_date,p.street_address,CASE WHEN p.birth_date<=CURRENT_DATE() THEN TIMESTAMPDIFF(YEAR,p.birth_date,CURRENT_DATE()) ELSE NULL END age_years,p.email,p.phone,p.city,p.state,p.postal_code,
           f.payer_count,f.payer_person_id,f.payer_member_count,f.financial_attribution_status,f.subscription_allocation_status,
           CASE WHEN m.member_status='active' AND (m.member_until IS NULL OR m.member_until>=CURRENT_DATE()) THEN 'Active' WHEN m.member_status='unknown' AND (m.member_until IS NULL OR m.member_until>=CURRENT_DATE()) THEN 'Unknown' ELSE 'Inactive / non-active' END activity_label
           FROM vw_member_summary m JOIN people p ON p.id=m.person_id JOIN vw_member_demographics d ON d.member_id=m.member_id JOIN vw_member_financial_summary f ON f.member_id=m.member_id WHERE $field=?",[$value]);
-        return $rows[0]??($identifier->bma!==null?$this->findPerson($identifier):null);
+        return $rows[0]??($identifier->bma!==null?$this->findPerson($identifier,$sensitive):null);
     }
-    private function findPerson(MemberProfileIdentifier $id): ?array
+    private function findPerson(MemberProfileIdentifier $id,bool $sensitive=false): ?array
     {
         $field=$id->personId!==null?'p.id':'p.bma_person_id';$value=$id->personId??$id->bma;
-        $rows=$this->rows("SELECT NULL member_id,p.id person_id,p.bma_person_id,TRIM(CONCAT_WS(' ',p.first_name,p.middle_name,p.last_name)) member_name,'not_verified' member_status,NULL member_since,NULL member_until,CASE WHEN p.birth_date<=CURRENT_DATE() THEN TIMESTAMPDIFF(YEAR,p.birth_date,CURRENT_DATE()) ELSE NULL END age_years,p.email,p.phone,p.city,p.state,p.postal_code,'Membership not verified' activity_label FROM people p WHERE $field=? AND EXISTS(SELECT 1 FROM identity_links l WHERE l.person_id=p.id AND l.match_status='confirmed')",[$value]);return $rows[0]??null;
+        $dob=$sensitive?'p.birth_date':'NULL';
+        $rows=$this->rows("SELECT NULL member_id,p.id person_id,p.bma_person_id,TRIM(CONCAT_WS(' ',p.first_name,p.middle_name,p.last_name)) member_name,'not_verified' member_status,NULL member_since,NULL member_until,$dob birth_date,p.street_address,CASE WHEN p.birth_date<=CURRENT_DATE() THEN TIMESTAMPDIFF(YEAR,p.birth_date,CURRENT_DATE()) ELSE NULL END age_years,p.email,p.phone,p.city,p.state,p.postal_code,'No member record' activity_label FROM people p WHERE $field=?",[$value]);return $rows[0]??null;
     }
     public function consolidatedSources(int $person,array $config): array
     {
@@ -90,15 +98,17 @@ final class MemberProfileRepository
     {
         $params=[];$where=$this->paymentWhere($member,'',$params);return array_column($this->rows('SELECT DISTINCT t.currency FROM vw_transaction_summary t'.$where.' ORDER BY t.currency',$params),'currency');
     }
-    public function totals(int $member,string $currency): array
+    public function totals(int $member,string $currency,bool $accounts=false): array
     {
         $params=[];$where=$this->paymentWhere($member,$currency,$params);
-        return $this->rows('SELECT t.currency,COUNT(*) payment_count,SUM(t.gross_paid_minor) gross_paid_minor,
-          CASE WHEN SUM(t.refund_known)=COUNT(*) THEN SUM(t.refunds_minor) ELSE NULL END refunds_minor,
-          CASE WHEN SUM(t.fee_known)=COUNT(*) THEN SUM(t.stripe_fees_minor) ELSE NULL END stripe_fees_minor,
-          CASE WHEN SUM(t.refund_known)=COUNT(*) AND SUM(t.fee_known)=COUNT(*) THEN SUM(t.net_after_recorded_costs_minor) ELSE NULL END net_minor,
-          MIN(t.stripe_created_at) first_payment,MAX(t.stripe_created_at) last_payment,SUM(t.stripe_created_at IS NULL) undated_count
-          FROM vw_transaction_summary t'.$where.' AND t.is_paid=1 GROUP BY t.currency ORDER BY t.currency',$params);
+        $account=$accounts?'t.stripe_customer_id,':'';$group=$accounts?',t.stripe_customer_id':'';
+        return $this->rows("SELECT $account t.currency,COUNT(*) transaction_count,SUM(t.is_paid=1) payment_count,SUM(t.status='failed') failed_count,SUM(t.status='refunded') fully_refunded_count,SUM(t.gross_paid_minor) gross_paid_minor,
+          CASE WHEN SUM(t.is_paid=1 AND t.refund_known=0)=0 THEN SUM(CASE WHEN t.is_paid=1 THEN t.gross_paid_minor-t.refunds_minor ELSE 0 END) ELSE NULL END collections_before_fees_minor,
+          CASE WHEN COUNT(t.amount_refunded_minor)=COUNT(*) THEN SUM(t.amount_refunded_minor) ELSE NULL END refunds_minor,
+          CASE WHEN SUM(t.is_paid)>0 AND SUM(t.fee_known)=SUM(t.is_paid) THEN SUM(t.stripe_fees_minor) ELSE NULL END stripe_fees_minor,
+          CASE WHEN SUM(t.is_paid)>0 AND SUM(t.refund_known)=SUM(t.is_paid) AND SUM(t.fee_known)=SUM(t.is_paid) THEN SUM(t.net_after_recorded_costs_minor) ELSE NULL END net_minor,
+          MIN(CASE WHEN t.is_paid=1 THEN t.stripe_created_at END) first_payment,MAX(CASE WHEN t.is_paid=1 THEN t.stripe_created_at END) last_payment,SUM(t.stripe_created_at IS NULL) undated_count
+          FROM vw_transaction_summary t".$where." GROUP BY t.currency$group ORDER BY t.currency$group",$params);
     }
     public function trend(int $member,string $currency): array
     {

@@ -27,7 +27,7 @@ final class ConsolidatedInputs
         $path=realpath($directory.'/'.self::FILES['groups']);if($path===false)return [];Paths::assertPrivate($path,$roots);if(filesize($path)>20971520)throw new RuntimeException('RECONCILIATION_INPUT_UNAVAILABLE');$f=fopen($path,'rb');if(fread($f,3)!=="\xEF\xBB\xBF")rewind($f);$out=[];
         try{$headers=fgetcsv($f,0,',','"','');if(!is_array($headers))return [];$headers[0]=preg_replace('/^\xEF\xBB\xBF/','',$headers[0]);$index=array_flip($headers);if(!isset($index['Group ID'],$index['Waiver IDs']))return [];
             while(($row=fgetcsv($f,0,',','"',''))!==false){$id=$row[$index['Group ID']]??'';if(!isset($groups[$id]))continue;$ids=self::parts($row[$index['Waiver IDs']]??'');if(array_diff($ids,$groups[$id])!==[])continue;
-                $fields=['Group ID'];if($medical)$fields=array_merge($fields,['Goals (all unique)','Considerations (all unique)']);if($emergency)$fields=array_merge($fields,['Emergency contact(s)','Emergency phone(s)']);$approved=[];foreach($fields as $field)if(isset($index[$field]))$approved[$field]=$row[$index[$field]]??'';$out[]=$approved;
+                $fields=['Group ID'];if($medical)$fields=array_merge($fields,['Goals (all unique)','Considerations (all unique)','Student name','Waiver signer(s)','Relationship(s) to student','Stripe association status','Stripe customer ID(s)']);if($emergency)$fields=array_merge($fields,['Emergency contact(s)','Emergency phone(s)']);$approved=[];foreach($fields as $field)if(isset($index[$field]))$approved[$field]=$row[$index[$field]]??'';$out[]=$approved;
             }
         }finally{fclose($f);}return $out;
     }

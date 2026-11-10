@@ -11,6 +11,7 @@ $page = (string) ($_GET['page'] ?? 'dashboard');
 requireDashboardAccess($page==='dashboard'?'overview':($page==='sync'?'settings':$page));
 if (in_array($page,['settings','users','sync'],true)) {if(($GLOBALS['bma_current_user']['role']??'')!=='admin'){http_response_code(403);exit('Administrator access is required.');}header('Location: /admin/'.($page==='users'?'users':'settings').'.php',true,303);exit;}
 if ($page === 'demographics') { header('Location: /demographics', true, 302); exit; }
+if ($page === 'members') { header('Location: /member.php', true, 302); exit; }
 if ($page === 'membership') { header('Location: /membership', true, 302); exit; }
 if ($page === 'revenue') { header('Location: /revenue', true, 302); exit; }
 if (!isset($navigation[$page]) || in_array($page, ['imports', 'matches'], true)) {
