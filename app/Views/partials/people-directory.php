@@ -4,7 +4,7 @@ require_once APP_ROOT.'/app/Membership/MembershipRepository.php';
 try{$input=$_GET;$input['search']=$input['q']??'';$filters=PeopleDirectoryFilters::fromRequest($input);$options=(new MembershipRepository(bmaDatabase($config)))->options();$directoryError=null;}
 catch(InvalidArgumentException){http_response_code(400);$directoryError='Invalid directory filters.';}
 catch(Throwable){http_response_code(503);$directoryError='People directory unavailable.';}
-uiLayoutStart('People & members','members','Browse people separately from actual membership records. Ages are calculated; household context does not establish enrollment.',['https://cdn.datatables.net/v/bs5/dt-3.1.3/datatables.min.css']);
+uiLayoutStart('People & members','members','Browse people separately from actual membership records. Ages are calculated; household context does not establish enrollment.',['/assets/vendor/datatables/3.1.3/datatables.min.css']);
 if($directoryError!==null){uiAlert($directoryError);uiLayoutEnd();return;}
 ?>
 <form class="filter-bar mb-4" method="get" action="/member.php"><div class="row g-3 align-items-end">
@@ -22,5 +22,5 @@ foreach(['customer'=>'Stripe customer','subscription'=>'Subscription','payments'
 <p id="directory-error" class="alert alert-danger" hidden>Directory could not load. Reload the page or check access.</p><noscript>Enable JavaScript to page, sort and filter the directory.</noscript>
 <?php uiCardEnd(); ?>
 <script id="directory-data" type="application/json"><?=json_encode($filters,JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_THROW_ON_ERROR)?></script>
-<script src="https://cdn.datatables.net/v/bs5/dt-3.1.3/datatables.min.js" defer></script><script src="/assets/js/people-directory.js" defer></script>
+<script src="/assets/vendor/datatables/3.1.3/datatables.min.js" defer></script><script src="/assets/js/people-directory.js" defer></script>
 <?php uiLayoutEnd(); ?>
