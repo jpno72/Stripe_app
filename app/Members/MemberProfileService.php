@@ -8,7 +8,7 @@ final class MemberProfileService
     {
         $member=$this->repository->find($identifier,$admin);if(!$member)return null;
         $id=$member['member_id']===null?-(int)$member['person_id']:(int)$member['member_id'];$payers=$this->repository->payers($id);$subscriptions=$this->repository->subscriptions($id);
-        $exclusive=$member['member_id']!==null&&count($payers)===1&&(int)$payers[0]['member_count']===1&&(int)$payers[0]['related_student_count']===1;
+        $exclusive=$member['member_id']!==null&&count($payers)===1&&(int)$payers[0]['member_count']===1&&(int)$payers[0]['related_student_count']===1&&!$this->repository->hasExplicitAllocations($id);
         $currencies=$this->repository->paymentCurrencies($id);if($currency===''&&count($currencies)===1&&$currencies[0]!==null)$currency=$currencies[0];
         $totals=$this->repository->totals($id,$currency);$programs=[];
         foreach($subscriptions as $subscription){if(!$subscription['current_assignment'])continue;foreach($subscription['items'] as $item){if($item['product_name'])$programs[$item['product_name']]=true;}}

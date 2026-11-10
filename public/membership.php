@@ -33,5 +33,5 @@ echo '<div class="mt-4">';uiCardStart('Members','One row per member. Rates are c
 echo '<div class="table-responsive"><table id="membership-members" class="table align-middle w-100"><thead><tr><th>BMA ID</th><th>Member</th><th>Payer</th><th>Program</th><th>Member status</th><th>Member since</th><th>Subscription</th><th>Monthly equivalent</th><th>Last payment (local)</th></tr></thead><tbody></tbody></table></div>';uiCardEnd();echo '</div>';
 ?>
 <script id="membership-data" type="application/json"><?=json_encode(['events'=>$data['events'],'cancellations'=>$data['cancellations'],'mix'=>$data['mix'],'statuses'=>$data['statuses'],'filters'=>$filters->query()],JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_INVALID_UTF8_SUBSTITUTE|JSON_THROW_ON_ERROR)?></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js" defer></script><script src="https://cdn.datatables.net/v/bs5/dt-3.1.3/datatables.min.js" defer></script><script src="/assets/js/membership.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js" defer></script><script src="https://cdn.datatables.net/v/bs5/dt-3.1.3/datatables.min.js" defer></script><script src="/assets/js/membership.js?v=directory-20261110" defer></script>
 <?php uiLayoutEnd(); ?>

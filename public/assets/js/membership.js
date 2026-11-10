@@ -20,7 +20,7 @@
  }
  const table=document.getElementById('membership-members');const url=new URL('/api/membership-members.php',location.origin);
  Object.entries(data.filters).forEach(([key,value])=>url.searchParams.set(key,value));
- if(typeof DataTable!=='undefined')new DataTable(table,{processing:true,serverSide:true,pageLength:25,order:[[1,'asc']],ajax:url.toString(),language:{emptyTable:'No members match these filters.'}});
+ if(typeof DataTable!=='undefined')new DataTable(table,{processing:true,serverSide:true,pageLength:25,lengthMenu:[25,50,100,250],pagingType:'full_numbers',order:[[1,'asc']],ajax:url.toString(),language:{emptyTable:'No members match these filters.'}});
  else fetch(url.toString()).then(response=>response.json()).then(result=>{
    if(result.error)throw new Error(result.error);
    const body=table.querySelector('tbody');

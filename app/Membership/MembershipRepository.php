@@ -81,7 +81,7 @@ final class MembershipRepository
         $p=[];$w=$this->memberWhere($f,$p,trim($search));$filtered=(int)$this->rows('SELECT COUNT(*) count'.$base.$w,$p)[0]['count'];
         $orders=['m.bma_person_id','m.member_name','f.payer_name','f.membership_product','m.member_status','m.member_since','f.stripe_subscription_id','f.monthly_equivalent_minor','f.last_payment_at'];
         $sort=$orders[$column]??$orders[1];$direction=strtolower($direction)==='desc'?'DESC':'ASC';
-        $offset=max(0,min($offset,1000000));$limit=max(1,min($limit,100));
+        $offset=max(0,min($offset,1000000));$limit=max(1,min($limit,250));
         $rows=$this->rows('SELECT m.bma_person_id,m.member_name,m.member_status,m.member_since,f.payer_name,f.payer_count,f.membership_product,f.stripe_subscription_id,f.subscription_status,f.monthly_equivalent_minor,s.currency rate_currency,f.last_payment_at,f.financial_attribution_status,f.subscription_allocation_status'.$base.' LEFT JOIN vw_subscription_summary s ON s.stripe_subscription_id=f.stripe_subscription_id'.$w." ORDER BY $sort $direction,m.member_id ASC LIMIT $limit OFFSET $offset",$p);
         return compact('total','filtered','rows');
     }

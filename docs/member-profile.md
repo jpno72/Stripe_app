@@ -38,3 +38,7 @@ No schema migration, import or backfill is included or executed. Existing migrat
 ## Post-migration completion
 
 Payment summaries show unique total, successful, failed and fully refunded counts per verified Stripe account and currency. Charge descriptions aggregate successful source charges only; descriptions do not establish enrollment. The individual transaction ledger is collapsed by default. Missing fees and final net remain unknown. Shared-payer totals remain explicitly unallocated account context and must not be summed across students. No attribution is inferred for guest/unassigned payments. See [completion validation](member-profile-completion-validation.md).
+
+## Directory and Stripe association editing
+
+The existing People lookup now supports server-side paging, sorting, filtering and All People / Members Only. Administrators with Members permission can open Manage Stripe Associations on a profile. Imported financial data stays read-only; reviewed links/assignments use transactional preview/confirmation, conflict handling, CSRF and audit receipts. Direct payment allocations require the separately approved migration 012. Profiles show related account/direct-payment context without claiming full member attribution when explicit allocations exist. See [directory/editor documentation](member-directory-stripe-associations.md) and [validation](member-directory-stripe-validation.md).

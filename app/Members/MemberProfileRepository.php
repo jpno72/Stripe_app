@@ -2,11 +2,47 @@
 declare(strict_types=1);
 require_once __DIR__.'/MemberProfileIdentifier.php';
 require_once __DIR__.'/MemberProfileAccess.php';
+require_once __DIR__.'/PeopleDirectoryFilters.php';
+require_once __DIR__.'/StripeAssociationRepository.php';
 require_once dirname(__DIR__, 2).'/src/AppTime.php';
 final class MemberProfileRepository
 {
     public function __construct(private PDO $db) {}
     private function rows(string $sql,array $params=[]): array {$q=$this->db->prepare(AppTime::calendarSql($sql));$q->execute($params);return $q->fetchAll();}
+    public function peoplePage(array $filters,int $offset,int $limit,int $column,string $direction): array
+    {
+        $f=PeopleDirectoryFilters::fromRequest($filters);
+        $account="EXISTS(SELECT 1 FROM identity_links l WHERE l.source_system='stripe' AND l.source_type='customer' AND l.source_role='customer' AND l.external_id=c.stripe_customer_id AND l.person_id=c.person_id AND l.match_status IN ('confirmed','automatic') AND (l.person_id=p.id OR EXISTS(SELECT 1 FROM person_relationships r WHERE r.person_id=l.person_id AND r.related_person_id=p.id AND r.relationship_type='payer')))";
+        $current="(map.valid_from IS NULL OR map.valid_from<=CURRENT_DATE()) AND (map.valid_until IS NULL OR map.valid_until>=CURRENT_DATE())";
+        $subscription="EXISTS(SELECT 1 FROM stripe_customers c WHERE c.id=s.customer_id AND $account) OR EXISTS(SELECT 1 FROM subscription_members map WHERE map.subscription_id=s.id AND map.member_id=m.id AND $current)";
+        $manual=StripeAssociationRepository::attributionReady($this->db)?" OR EXISTS(SELECT 1 FROM stripe_transaction_attributions a WHERE a.transaction_id=t.id AND (a.person_id=p.id OR (a.attribution_role='payer' AND EXISTS(SELECT 1 FROM person_relationships r WHERE r.person_id=a.person_id AND r.related_person_id=p.id AND r.relationship_type='payer'))))":'';
+        $payment="EXISTS(SELECT 1 FROM stripe_customers c WHERE c.id=t.customer_id AND $account)$manual";
+        $base="SELECT p.id,p.bma_person_id,p.first_name,p.middle_name,p.last_name,p.email,p.phone,m.id member_id,m.member_status,m.member_since,
+          CASE WHEN p.birth_date<=CURRENT_DATE() THEN TIMESTAMPDIFF(YEAR,p.birth_date,CURRENT_DATE()) ELSE NULL END age_years,
+          (SELECT GROUP_CONCAT(DISTINCT i.product_name ORDER BY i.product_name SEPARATOR ', ') FROM subscription_members map JOIN vw_subscription_item_rates i ON i.subscription_id=map.subscription_id WHERE map.member_id=m.id AND $current) program,
+          (SELECT GROUP_CONCAT(DISTINCT c.stripe_customer_id ORDER BY c.stripe_customer_id SEPARATOR ', ') FROM stripe_customers c WHERE $account) customer_ids,
+          (SELECT GROUP_CONCAT(DISTINCT COALESCE(s.status,'unknown') ORDER BY s.status SEPARATOR ', ') FROM stripe_subscriptions s WHERE $subscription) subscription_statuses,
+          (SELECT MAX(t.stripe_created_at) FROM stripe_transactions t WHERE $payment) last_payment,
+          EXISTS(SELECT 1 FROM stripe_transactions t WHERE $payment) has_payments
+          FROM people p LEFT JOIN members m ON m.person_id=p.id";
+        $params=[];$where=['1=1'];
+        if($f['scope']==='members')$where[]='d.member_id IS NOT NULL';
+        foreach(['member_status'=>'d.member_status','subscription_status'=>'d.subscription_statuses'] as $key=>$field)if($f[$key]!==''){
+            if($key==='member_status'){$where[]="$field=?";$params[]=$f[$key];}
+            else{$where[]="FIND_IN_SET(?,REPLACE($field,', ',','))>0";$params[]=$f[$key];}
+        }
+        if($f['program']!==''){$where[]="EXISTS(SELECT 1 FROM subscription_members map JOIN vw_subscription_item_rates i ON i.subscription_id=map.subscription_id WHERE map.member_id=d.member_id AND $current AND i.product_name=?)";$params[]=$f['program'];}
+        foreach(['customer'=>'d.customer_ids','subscription'=>'d.subscription_statuses'] as $key=>$field)if($f[$key]!=='')$where[]=$field.($f[$key]==='yes'?' IS NOT NULL':' IS NULL');
+        if($f['payments']!==''){$where[]='d.has_payments=?';$params[]=$f['payments']==='yes'?1:0;}
+        foreach(['age_min'=>'>=','age_max'=>'<='] as $key=>$operator)if($f[$key]!==''){$where[]="d.age_years $operator ?";$params[]=(int)$f[$key];}
+        if($f['search']!==''){$like='%'.str_replace(['!','%','_'],['!!','!%','!_'],mb_substr($f['search'],0,100)).'%';$where[]="(d.bma_person_id LIKE ? ESCAPE '!' OR CONCAT_WS(' ',d.first_name,d.middle_name,d.last_name) LIKE ? ESCAPE '!' OR CONCAT_WS(' ',d.first_name,d.last_name) LIKE ? ESCAPE '!' OR d.email LIKE ? ESCAPE '!' OR d.phone LIKE ? ESCAPE '!')";array_push($params,$like,$like,$like,$like,$like);}
+        $from=' FROM ('.$base.') d';$w=' WHERE '.implode(' AND ',$where);
+        $total=(int)$this->rows('SELECT COUNT(*) n FROM people')[0]['n'];$filtered=(int)$this->rows('SELECT COUNT(*) n'.$from.$w,$params)[0]['n'];
+        $orders=['d.bma_person_id','d.first_name','d.last_name','d.age_years','d.member_status','d.member_since','d.program','d.customer_ids','d.subscription_statuses','d.last_payment'];
+        $order=$orders[$column]??$orders[2];$direction=strtolower($direction)==='desc'?'DESC':'ASC';$offset=max(0,min($offset,10000000));$limit=max(1,min($limit,250));
+        $rows=$this->rows('SELECT d.*'.$from.$w." ORDER BY $order $direction,d.id ASC LIMIT $limit OFFSET $offset",$params);
+        return compact('total','filtered','rows');
+    }
     public function searchPeople(string $search): array
     {
         $search=mb_substr(trim($search),0,100);$params=[];$where='';
@@ -45,7 +81,7 @@ final class MemberProfileRepository
           (SELECT GROUP_CONCAT(DISTINCT r.relationship_type ORDER BY r.relationship_type SEPARATOR ', ') FROM person_relationships r WHERE r.person_id=scope.payer_person_id AND r.related_person_id=scope.member_person_id) relationships,
           (SELECT COUNT(*) FROM vw_payer_member_scope x WHERE x.payer_person_id=scope.payer_person_id) member_count
           FROM vw_payer_member_scope scope JOIN people p ON p.id=scope.payer_person_id WHERE scope.member_id=? ORDER BY p.last_name,p.id",[$member]);
-        foreach($rows as &$row){$row['customers']=$this->rows("SELECT c.stripe_customer_id FROM stripe_customers c JOIN identity_links l ON l.source_system='stripe' AND l.source_type='customer' AND l.source_role='customer' AND l.external_id=c.stripe_customer_id AND l.match_status IN ('automatic','confirmed') WHERE l.person_id=? ORDER BY c.stripe_customer_id",[$row['payer_person_id']]); $row['related_student_count']=(int)$this->rows("SELECT COUNT(*) n FROM (SELECT related_person_id person_id FROM person_relationships WHERE person_id=? AND relationship_type='payer' UNION SELECT person_id FROM members WHERE person_id=?) participants",[$row['payer_person_id'],$row['payer_person_id']])[0]['n'];}unset($row);return $rows;
+        foreach($rows as &$row){$row['customers']=$this->rows("SELECT c.stripe_customer_id,c.name,c.email FROM stripe_customers c JOIN identity_links l ON l.source_system='stripe' AND l.source_type='customer' AND l.source_role='customer' AND l.external_id=c.stripe_customer_id AND l.match_status IN ('automatic','confirmed') WHERE l.person_id=? ORDER BY c.stripe_customer_id",[$row['payer_person_id']]); $row['related_student_count']=(int)$this->rows("SELECT COUNT(*) n FROM (SELECT related_person_id person_id FROM person_relationships WHERE person_id=? AND relationship_type='payer' UNION SELECT person_id FROM members WHERE person_id=?) participants",[$row['payer_person_id'],$row['payer_person_id']])[0]['n'];}unset($row);return $rows;
     }
     public function guardians(int $person): array
     {
@@ -82,6 +118,11 @@ final class MemberProfileRepository
     {
         if($member<0){$person=-$member;$params[]=$person;$params[]=$person;$where=" WHERE (t.payer_person_id=? OR EXISTS(SELECT 1 FROM person_relationships r WHERE r.person_id=t.payer_person_id AND r.related_person_id=? AND r.relationship_type='payer'))";}
         else{$params[]=$member;$where=" WHERE EXISTS(SELECT 1 FROM vw_payer_member_scope scope WHERE scope.member_id=? AND scope.payer_person_id=t.payer_person_id)";}
+        if(StripeAssociationRepository::attributionReady($this->db)){
+            if($member<0){$manual="a.person_id=? OR (a.attribution_role='payer' AND EXISTS(SELECT 1 FROM person_relationships r WHERE r.person_id=a.person_id AND r.related_person_id=? AND r.relationship_type='payer'))";array_push($params,-$member,-$member);}
+            else{$manual="a.person_id=(SELECT person_id FROM members WHERE id=?) OR (a.attribution_role='payer' AND EXISTS(SELECT 1 FROM vw_payer_member_scope scope WHERE scope.member_id=? AND scope.payer_person_id=a.person_id))";array_push($params,$member,$member);}
+            $where=' WHERE ('.substr($where,7).' OR EXISTS(SELECT 1 FROM stripe_transaction_attributions a WHERE a.transaction_id=t.transaction_id AND ('.$manual.')))';
+        }
         if($currency!==''){$where.=' AND t.currency=?';$params[]=$currency;}
         if($search!==''){$where.=" AND (t.stripe_charge_id LIKE ? ESCAPE '!' OR t.stripe_invoice_id LIKE ? ESCAPE '!' OR t.status LIKE ? ESCAPE '!' OR TRIM(CONCAT_WS(' ',payer.first_name,payer.last_name)) LIKE ? ESCAPE '!')";$like='%'.str_replace(['!','%','_'],['!!','!%','!_'],mb_substr(trim($search),0,100)).'%';array_push($params,$like,$like,$like,$like);}
         return $where;
@@ -97,6 +138,12 @@ final class MemberProfileRepository
     public function paymentCurrencies(int $member): array
     {
         $params=[];$where=$this->paymentWhere($member,'',$params);return array_column($this->rows('SELECT DISTINCT t.currency FROM vw_transaction_summary t'.$where.' ORDER BY t.currency',$params),'currency');
+    }
+    public function hasExplicitAllocations(int $member):bool
+    {
+        if(!StripeAssociationRepository::attributionReady($this->db))return false;
+        $params=[];$where=$this->paymentWhere($member,'',$params);
+        return $this->rows('SELECT 1 FROM vw_transaction_summary t JOIN stripe_transaction_attributions allocation ON allocation.transaction_id=t.transaction_id'.$where.' LIMIT 1',$params)!==[];
     }
     public function totals(int $member,string $currency,bool $accounts=false): array
     {
