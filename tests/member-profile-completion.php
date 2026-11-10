@@ -69,4 +69,3 @@ $coverage=$demographics->participantCoverage();$expected=(int)$db->query("SELECT
 $unknown=$demographics->overview(new DemographicFilters(age:'unknown'));completeCheck($unknown['stats']['average_age']===null&&$unknown['stats']['median_age']===null,'unknown age scope never invents average or median ages');
 completeCheck(!preg_match('/birth_date|medical|considerations|contact_email|member_name/',json_encode($demo)),'aggregate demographic response excludes sensitive individual fields');
 echo "$checks completion checks passed; local fixture writes rolled back.\n";
-
