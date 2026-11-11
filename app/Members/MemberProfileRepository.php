@@ -3,15 +3,19 @@ declare(strict_types=1);
 require_once __DIR__.'/MemberProfileIdentifier.php';
 require_once __DIR__.'/MemberProfileAccess.php';
 require_once __DIR__.'/PeopleDirectoryFilters.php';
+require_once __DIR__.'/WaiverAssociationService.php';
 require_once __DIR__.'/StripeAssociationRepository.php';
 require_once dirname(__DIR__, 2).'/src/AppTime.php';
 final class MemberProfileRepository
 {
     public function __construct(private PDO $db) {}
     private function rows(string $sql,array $params=[]): array {$q=$this->db->prepare(AppTime::calendarSql($sql));$q->execute($params);return $q->fetchAll();}
-    public function peoplePage(array $filters,int $offset,int $limit,int $column,string $direction): array
+    public function peoplePage(array $filters,int $offset,int $limit,int $column,string $direction,bool $associationAccess=false): array
     {
         $f=PeopleDirectoryFilters::fromRequest($filters);
+        if(!$associationAccess&&$f['associations']!=='')throw new InvalidArgumentException('Administrator association access required.');
+        $associationSelect='';$associationJoin='';
+        if($associationAccess){$a=WaiverAssociationService::directorySql($this->db);$associationSelect=',COALESCE(av.people,0) associated_people,COALESCE(av.roles,0) association_roles,COALESCE(av.verified,0) verified_associations,COALESCE(av.proposed,0) proposed_associations,COALESCE(av.proposed,0) association_proposals,COALESCE(av.units,0) association_count';$associationJoin=" LEFT JOIN {$a['summary']} av ON av.person_id=p.id";}
         $account="EXISTS(SELECT 1 FROM identity_links l WHERE l.source_system='stripe' AND l.source_type='customer' AND l.source_role='customer' AND l.external_id=c.stripe_customer_id AND l.person_id=c.person_id AND l.match_status IN ('confirmed','automatic') AND (l.person_id=p.id OR EXISTS(SELECT 1 FROM person_relationships r WHERE r.person_id=l.person_id AND r.related_person_id=p.id AND r.relationship_type='payer')))";
         $current="(map.valid_from IS NULL OR map.valid_from<=CURRENT_DATE()) AND (map.valid_until IS NULL OR map.valid_until>=CURRENT_DATE())";
         $subscription="EXISTS(SELECT 1 FROM stripe_customers c WHERE c.id=s.customer_id AND $account) OR EXISTS(SELECT 1 FROM subscription_members map WHERE map.subscription_id=s.id AND map.member_id=m.id AND $current)";
@@ -24,7 +28,7 @@ final class MemberProfileRepository
           (SELECT GROUP_CONCAT(DISTINCT COALESCE(s.status,'unknown') ORDER BY s.status SEPARATOR ', ') FROM stripe_subscriptions s WHERE $subscription) subscription_statuses,
           (SELECT MAX(t.stripe_created_at) FROM stripe_transactions t WHERE $payment) last_payment,
           EXISTS(SELECT 1 FROM stripe_transactions t WHERE $payment) has_payments
-          FROM people p LEFT JOIN members m ON m.person_id=p.id";
+          $associationSelect FROM people p LEFT JOIN members m ON m.person_id=p.id $associationJoin";
         $params=[];$where=['1=1'];
         if($f['scope']==='members')$where[]='d.member_id IS NOT NULL';
         foreach(['member_status'=>'d.member_status','subscription_status'=>'d.subscription_statuses'] as $key=>$field)if($f[$key]!==''){
@@ -36,9 +40,11 @@ final class MemberProfileRepository
         if($f['payments']!==''){$where[]='d.has_payments=?';$params[]=$f['payments']==='yes'?1:0;}
         foreach(['age_min'=>'>=','age_max'=>'<='] as $key=>$operator)if($f[$key]!==''){$where[]="d.age_years $operator ?";$params[]=(int)$f[$key];}
         if($f['search']!==''){$like='%'.str_replace(['!','%','_'],['!!','!%','!_'],mb_substr($f['search'],0,100)).'%';$where[]="(d.bma_person_id LIKE ? ESCAPE '!' OR CONCAT_WS(' ',d.first_name,d.middle_name,d.last_name) LIKE ? ESCAPE '!' OR CONCAT_WS(' ',d.first_name,d.last_name) LIKE ? ESCAPE '!' OR d.email LIKE ? ESCAPE '!' OR d.phone LIKE ? ESCAPE '!')";array_push($params,$like,$like,$like,$like,$like);}
+        if($f['associations']!=='')$where[]=match($f['associations']){'people'=>'d.associated_people>1','roles'=>'d.association_roles>1','multiple'=>'(d.associated_people>1 OR d.association_roles>1)','review'=>'d.association_proposals>0'};
         $from=' FROM ('.$base.') d';$w=' WHERE '.implode(' AND ',$where);
         $total=(int)$this->rows('SELECT COUNT(*) n FROM people')[0]['n'];$filtered=(int)$this->rows('SELECT COUNT(*) n'.$from.$w,$params)[0]['n'];
         $orders=['d.bma_person_id','d.first_name','d.last_name','d.age_years','d.member_status','d.member_since','d.program','d.customer_ids','d.subscription_statuses','d.last_payment'];
+        if($associationAccess)$orders[]='d.association_count';
         $order=$orders[$column]??$orders[2];$direction=strtolower($direction)==='desc'?'DESC':'ASC';$offset=max(0,min($offset,10000000));$limit=max(1,min($limit,250));
         $rows=$this->rows('SELECT d.*'.$from.$w." ORDER BY $order $direction,d.id ASC LIMIT $limit OFFSET $offset",$params);
         return compact('total','filtered','rows');
