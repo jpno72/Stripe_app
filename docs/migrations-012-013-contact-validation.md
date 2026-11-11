@@ -22,10 +22,12 @@ production snapshot. Existing migrations and checksums were not edited.
 
 ## Restore and validation evidence
 
-A new disposable database was freshly restored from the complete, previously
-verified November 10 production backup. Its table fingerprints and object inventory
-matched that backup before testing. This is a fresh restore of that snapshot,
-**not a claim that today's live production history has been checked**.
+A new complete production SQL backup was obtained through the verified SSH tunnel,
+including structure/data/views/triggers/routines/events. SQL SHA-256, gzip archive
+integrity and restore commands passed. A fresh disposable restore matched the
+current live production fingerprints for every table and its object inventory.
+The earlier snapshot rehearsal has now been supplemented by this current-live
+backup/restore verification; no production database write was performed.
 
 PASS: the normal runner reported exactly 012/013 pending and applied both in
 sequence. Every original table's data, including people, memberships, customers,
@@ -55,10 +57,39 @@ Focused checks passed:
   browser requests; contacts and original waivers were not rewritten.
 - Changed PHP syntax and Git whitespace checks.
 
-**Live preflight pending:** the previously used secure SQL forward at
-`127.0.0.1:13306` was unavailable during this review. The operator was asked to
-reopen it. Do not use the non-TLS remote SQL port directly, infer current migration
-history from FTP files, or describe the snapshot rehearsal as live verification.
+**PASS: live preflight completed through `127.0.0.1:13306`.** Current migration
+history/checksums and object inventory are intact; exactly 012 and 013 are pending,
+with neither new table present. Observed server: `10.6.20-MariaDB-cll-lve-log`. Counts:
+328 people, 34 members,
+112 Stripe customers,
+1282 transactions,
+29 subscriptions,
+730 identity links,
+9 relationships and
+2277 audit records. No original audit records were lost.
+
+The current restore passed the normal sequential migration run, six foreign-key
+checks, empty-table rollback, reapplication, association gate activation and
+on-demand discovery, association summary/directory queries, and consolidated
+profile queries. Every original table's data remained unchanged during these
+local checks. Earlier 114 focused PHP and 26 authenticated browser checks are
+reused; unchanged code was not subjected to another full regression suite.
+
+Fresh full backup (private, Git-ignored and outside the served public root):
+
+- SQL: `.local/contact-migration-review/live-preflight-20261111T073159Z.sql`
+- Bytes: 7,804,815
+- SQL SHA-256: `64a73455042324ca29e47f00d7da7060fea987536bc662e6c2c4244af3730b21`
+- Gzip SHA-256: `6cc958cca55698748e4964ed84101f988a1336dd3a7f003071922f003509172b`
+- Archive decompression and complete restore/live fingerprint comparison: PASS.
+- Detailed private evidence: `live-preflight.private.json` and
+  `live-backup.private.json` in the same directory.
+
+These checks approve no production write. The remaining approval is specifically
+migration **012 followed by 013 through the existing runner**, including its normal
+ledger records, without payment allocations, identity confirmations, matching
+runs or source changes. Repeat baseline/backup freshness checks immediately before
+any separately authorized application.
 
 ## Backup, approval and rollback plan
 
