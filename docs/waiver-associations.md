@@ -74,7 +74,11 @@ dashboard permissions, CSP and session authentication are unchanged.
 ## Migration and deployment gate
 
 `013_waiver_association_reviews.sql` adds one indexed, foreign-key-constrained table
-for discovery state and emergency identities. It is independent of migration 012.
+for discovery state and emergency identities. Its SQL has no dependency on 012,
+but the existing migration runner enforces consecutive migration history.
+Production migration 012 is still pending and unapproved: that sequencing decision
+must be resolved before installing 013 through the normal runner. Do not bypass
+migration history or silently apply 012.
 **Separate approval is required before applying 013 to production.** Do not use an
 unrestricted installer command that would also apply unapproved pending 012.
 No production schema operation is part of this release. Without the 013 migration
@@ -106,3 +110,13 @@ selectively uploaded as a runtime file.
 - Production authentication/UI actions are not claimed as browser-tested. Only
   anonymous live guards and deployed-file hashes are checked during deployment.
   No production identity decisions, source changes or migration are authorized here.
+
+Release verification: seven runtime files were selectively deployed from commit
+`547e2fa70d5f2f022ca7b016aa9c155db4a88e9d` after verifying five existing
+production baselines and two new targets. Private before-file backups, staged
+hashes, installed read-back hashes and PHP lint all passed. Live login, unchanged
+CSP, and anonymous Members/API/waiver-review/Stripe-editor access guards passed.
+Neither migration 012 nor 013 was uploaded/applied to production. Original eight
+business-table fingerprints on the disposable restore remained unchanged after
+fixture cleanup (328 people, 34 members, 1,282 transactions). No production
+database operation or identity decision was performed.
