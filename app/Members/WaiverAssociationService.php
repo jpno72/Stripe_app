@@ -25,6 +25,12 @@ final class WaiverAssociationService
         return $this->rows('SELECT id,bma_person_id,first_name,middle_name,last_name,email,phone,birth_date,street_address,city,state,postal_code FROM people WHERE id=?',[$id])[0]??throw new RuntimeException('PERSON_NOT_FOUND');
     }
     public function subject(int $actor,int $person):array {$this->actor($actor);return $this->person($person);}
+    public function profileSummary(int $actor,int $person):array
+    {
+        $this->actor($actor);$this->person($person);$sql=self::directorySql($this->db);
+        $row=$this->rows('SELECT verified,proposed FROM '.$sql['summary'].' a WHERE person_id=?',[$person])[0]??['verified'=>0,'proposed'=>0];
+        return ['verified'=>(int)$row['verified'],'proposed'=>(int)$row['proposed'],'ready'=>self::ready($this->db)];
+    }
     private function contacts(array $p):array
     {
         $emails=[];$phones=[];

@@ -55,12 +55,21 @@ final class MemberProfileRepository
         if($search!==''){$like='%'.str_replace(['!','%','_'],['!!','!%','!_'],$search).'%';$where=" WHERE p.bma_person_id LIKE ? ESCAPE '!' OR CONCAT_WS(' ',p.first_name,p.middle_name,p.last_name) LIKE ? ESCAPE '!' OR p.email LIKE ? ESCAPE '!' OR p.phone LIKE ? ESCAPE '!'";$params=[$like,$like,$like,$like];}
         return $this->rows("SELECT p.id,p.bma_person_id,TRIM(CONCAT_WS(' ',p.first_name,p.middle_name,p.last_name)) person_name,m.member_status FROM people p LEFT JOIN members m ON m.person_id=p.id".$where.' ORDER BY p.last_name,p.first_name,p.id LIMIT 50',$params);
     }
+    /** Existing reviewed importer only fills these fields after explicit ownership/address approval. */
+    public function reviewedContactFields(int $person):array
+    {
+        $fields=[];
+        foreach($this->rows("SELECT a.metadata FROM audit_log a WHERE a.entity_type='people' AND a.entity_id=? AND a.action='source_demographic_filled' AND a.actor_user_id IS NOT NULL ORDER BY a.id",[(string)$person]) as $row){
+            $metadata=json_decode($row['metadata'],true);$reviewed=$metadata['fields']??[];if(!is_array($reviewed))continue;foreach($reviewed as $field)if(in_array($field,['email','phone','street_address','address_line2','city','state','postal_code'],true))$fields[$field]=true;
+        }
+        return array_keys($fields);
+    }
     public function find(MemberProfileIdentifier $identifier,bool $sensitive=false): ?array
     {
         if($identifier->personId!==null){$m=$this->rows('SELECT id FROM members WHERE person_id=?',[$identifier->personId]);return $m!==[]?$this->find(new MemberProfileIdentifier((int)$m[0]['id'],null),$sensitive):$this->findPerson($identifier,$sensitive);}
         $dob=$sensitive?'p.birth_date':'NULL';
         $field=$identifier->memberId!==null?'m.member_id':'m.bma_person_id';$value=$identifier->memberId??$identifier->bma;
-        $rows=$this->rows("SELECT m.member_id,m.person_id,m.bma_person_id,m.member_name,m.member_status,m.member_since,m.member_until,$dob birth_date,p.street_address,CASE WHEN p.birth_date<=CURRENT_DATE() THEN TIMESTAMPDIFF(YEAR,p.birth_date,CURRENT_DATE()) ELSE NULL END age_years,p.email,p.phone,p.city,p.state,p.postal_code,
+        $rows=$this->rows("SELECT m.member_id,m.person_id,m.bma_person_id,m.member_name,m.member_status,m.member_since,m.member_until,$dob birth_date,p.street_address,p.address_line2,CASE WHEN p.birth_date<=CURRENT_DATE() THEN TIMESTAMPDIFF(YEAR,p.birth_date,CURRENT_DATE()) ELSE NULL END age_years,p.email,p.phone,p.city,p.state,p.postal_code,
           f.payer_count,f.payer_person_id,f.payer_member_count,f.financial_attribution_status,f.subscription_allocation_status,
           CASE WHEN m.member_status='active' AND (m.member_until IS NULL OR m.member_until>=CURRENT_DATE()) THEN 'Active' WHEN m.member_status='unknown' AND (m.member_until IS NULL OR m.member_until>=CURRENT_DATE()) THEN 'Unknown' ELSE 'Inactive / non-active' END activity_label
           FROM vw_member_summary m JOIN people p ON p.id=m.person_id JOIN vw_member_demographics d ON d.member_id=m.member_id JOIN vw_member_financial_summary f ON f.member_id=m.member_id WHERE $field=?",[$value]);
@@ -70,7 +79,7 @@ final class MemberProfileRepository
     {
         $field=$id->personId!==null?'p.id':'p.bma_person_id';$value=$id->personId??$id->bma;
         $dob=$sensitive?'p.birth_date':'NULL';
-        $rows=$this->rows("SELECT NULL member_id,p.id person_id,p.bma_person_id,TRIM(CONCAT_WS(' ',p.first_name,p.middle_name,p.last_name)) member_name,'not_verified' member_status,NULL member_since,NULL member_until,$dob birth_date,p.street_address,CASE WHEN p.birth_date<=CURRENT_DATE() THEN TIMESTAMPDIFF(YEAR,p.birth_date,CURRENT_DATE()) ELSE NULL END age_years,p.email,p.phone,p.city,p.state,p.postal_code,'No member record' activity_label FROM people p WHERE $field=?",[$value]);return $rows[0]??null;
+        $rows=$this->rows("SELECT NULL member_id,p.id person_id,p.bma_person_id,TRIM(CONCAT_WS(' ',p.first_name,p.middle_name,p.last_name)) member_name,'not_verified' member_status,NULL member_since,NULL member_until,$dob birth_date,p.street_address,p.address_line2,CASE WHEN p.birth_date<=CURRENT_DATE() THEN TIMESTAMPDIFF(YEAR,p.birth_date,CURRENT_DATE()) ELSE NULL END age_years,p.email,p.phone,p.city,p.state,p.postal_code,'No member record' activity_label FROM people p WHERE $field=?",[$value]);return $rows[0]??null;
     }
     public function consolidatedSources(int $person,array $config): array
     {
